@@ -16,6 +16,7 @@ import {
   generateSomaticSignals,
   generateBrainRegions,
   type BrainContext,
+  type LearningContext,
 } from '../engine/narrate'
 import { BodyState, createDefaultBodyState } from '../engine/bodyTypes'
 import { computeBodyState } from '../engine/body'
@@ -28,6 +29,7 @@ export interface ChatMessage {
   text: string
   timestamp: number
   stateSnapshot?: InternalState
+  fallback?: boolean
 }
 
 // ── Thought ──
@@ -169,6 +171,13 @@ interface EngineStore {
   registerImpact: (intensity: number, source: 'projectile' | 'chat' | 'scenario') => void
   recentChatActivity: number  // 0-1, decays over time — how recently a chat exchange happened
   registerChatActivity: () => void
+
+  // Session tracking
+  sessionStartedAt: number   // timestamp of first meaningful action (0 = pristine)
+  markSessionStarted: () => void
+
+  // Full reset
+  resetAll: () => void
 
   tick: () => void
 }
@@ -345,6 +354,7 @@ export const useStore = create<EngineStore>((set, get) => ({
   sendMessage: async (text) => {
     const store = get()
     if (store.isChatting) return
+    get().markSessionStarted()
 
     const userMsg: ChatMessage = {
       id: `msg-${++msgCounter}`,
@@ -417,6 +427,7 @@ export const useStore = create<EngineStore>((set, get) => ({
         }
       }).catch(() => {})
     } catch (err) {
+      console.warn('[Chat] LLM API failed, using fallback:', err)
       // Fallback to rule-based response
       const currentStore = get()
       const { response, associations: newAssocs } = generateAgentResponse(
@@ -428,6 +439,7 @@ export const useStore = create<EngineStore>((set, get) => ({
         text: response,
         timestamp: Date.now(),
         stateSnapshot: { ...currentStore.state },
+        fallback: true,
       }
       set((s) => ({
         chatMessages: [...s.chatMessages, agentMsg],
@@ -508,6 +520,7 @@ export const useStore = create<EngineStore>((set, get) => ({
   activeScenario: null,
   activateScenario: (scenario) => {
     const store = get()
+    get().markSessionStarted()
 
     // Apply state modifier directly to ISV
     const newState = { ...store.state, ...scenario.stateModifier }
@@ -548,6 +561,7 @@ export const useStore = create<EngineStore>((set, get) => ({
 
   registerProjectileHit: (projectileType, mass) => {
     const store = get()
+    get().markSessionStarted()
     const category = `projectile-${projectileType}`
     const now = Date.now()
 
@@ -752,6 +766,63 @@ export const useStore = create<EngineStore>((set, get) => ({
     get().tick()
   },
 
+  // ── Session tracking ──
+  sessionStartedAt: 0,
+  markSessionStarted: () => {
+    const store = get()
+    if (store.sessionStartedAt === 0) {
+      set({ sessionStartedAt: Date.now() })
+    }
+  },
+
+  // ── Full reset (back to time 0) ──
+  resetAll: () => {
+    // Stop thought loop before resetting
+    const store = get()
+    store.stopThoughtLoop()
+
+    // Reset counters
+    msgCounter = 0
+    assocCounter = 0
+    thoughtCounter = 0
+
+    set({
+      state: { ...defaultState },
+      chatMessages: [],
+      isChatting: false,
+      thoughts: [],
+      isThinking: false,
+      thoughtLoopActive: false,
+      activeScenario: null,
+      associations: [],
+      learnedPatterns: [],
+      stimulus: null,
+      stimulusActive: false,
+      interpretation: null,
+      currentAction: 'observe',
+      actionAvailability: [],
+      narration: 'Awaiting stimulus. Systems idle.',
+      cognitionFragments: [],
+      somaticSignals: [],
+      brainRegions: generateBrainRegions(defaultState, {
+        perceivedThreat: 0,
+        salience: 0,
+        cognitiveAccess: 0.8,
+        motorBias: 'approach',
+      }),
+      bodyState: createDefaultBodyState(),
+      stimulusProximity: 0,
+      exposureCount: 0,
+      recentImpact: null,
+      recentChatActivity: 0,
+      sessionStartedAt: 0,
+    })
+
+    // Restart thought loop
+    get().startThoughtLoop()
+    get().tick()
+  },
+
   tick: () => {
     const { state, stimulus, stimulusActive, recentImpact, recentChatActivity, learnedPatterns } = get()
 
@@ -774,6 +845,14 @@ export const useStore = create<EngineStore>((set, get) => ({
       survivalRelevance: learnedPatterns.reduce((max, p) => Math.max(max, p.survivalRelevance), 0),
     }
 
+    // Build learning context for cognition fragments
+    const learningCtx: LearningContext = {
+      totalExposures: learnedCtx.totalExposures,
+      survivalRelevance: learnedCtx.survivalRelevance,
+      learnedFamiliarity: learnedCtx.learnedFamiliarity,
+      recentHit: recentImpact !== null && (Date.now() - recentImpact.timestamp) < 2000 && recentImpact.source === 'projectile',
+    }
+
     if (!stimulus || !stimulusActive) {
       const idleInterp: Interpretation = {
         perceivedThreat: state.threat * 0.3,
@@ -788,7 +867,7 @@ export const useStore = create<EngineStore>((set, get) => ({
         currentAction: 'observe',
         actionAvailability: getActionAvailability(idleInterp, state),
         narration: explain(state, null, 'observe'),
-        cognitionFragments: generateCognitionFragments(state, idleInterp, null),
+        cognitionFragments: generateCognitionFragments(state, idleInterp, null, learningCtx),
         somaticSignals: idleSomatic,
         brainRegions: idleRegions,
         bodyState: computeBodyState(state, idleInterp, 'observe', idleSomatic, idleRegions),
@@ -800,7 +879,7 @@ export const useStore = create<EngineStore>((set, get) => ({
     const action = selectAction(interp)
     const availability = getActionAvailability(interp, state)
     const narration = explain(state, stimulus, action)
-    const fragments = generateCognitionFragments(state, interp, stimulus)
+    const fragments = generateCognitionFragments(state, interp, stimulus, learningCtx)
     const somatic = generateSomaticSignals(state, interp)
     const regions = generateBrainRegions(state, interp, brainCtx)
 

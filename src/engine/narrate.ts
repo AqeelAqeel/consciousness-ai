@@ -24,16 +24,32 @@ export function explain(state: InternalState, stimulus: Stimulus | null, action:
   return `Systems nominal. Stimulus processed. Action: ${action}.`
 }
 
+export interface LearningContext {
+  totalExposures: number
+  survivalRelevance: number
+  learnedFamiliarity: number
+  recentHit: boolean  // was there a hit in the last few seconds
+}
+
 export function generateCognitionFragments(
   state: InternalState,
   interp: Interpretation,
   stimulus: Stimulus | null,
+  learning?: LearningContext,
 ): CognitionFragment[] {
   const fragments: CognitionFragment[] = []
   const now = Date.now()
 
   if (!stimulus) {
-    fragments.push({ id: `cf-${++fragmentCounter}`, text: 'waiting...', intensity: 0.2, timestamp: now })
+    // Even idle, learning context can generate fragments
+    if (learning && learning.totalExposures > 3) {
+      fragments.push({ id: `cf-${++fragmentCounter}`, text: 'vigilant...', intensity: 0.3, timestamp: now })
+      if (learning.survivalRelevance > 0.5) {
+        fragments.push({ id: `cf-${++fragmentCounter}`, text: 'watching', intensity: 0.4, timestamp: now })
+      }
+    } else {
+      fragments.push({ id: `cf-${++fragmentCounter}`, text: 'waiting...', intensity: 0.2, timestamp: now })
+    }
     return fragments
   }
 
@@ -63,6 +79,40 @@ export function generateCognitionFragments(
   // Cognitive access
   if (interp.cognitiveAccess < 0.3) {
     fragments.push({ id: `cf-${++fragmentCounter}`, text: 'overload', intensity: 0.9, timestamp: now })
+  }
+
+  // ── Learning-driven fragments ──
+  if (learning) {
+    // Recent hit reaction
+    if (learning.recentHit) {
+      fragments.push({ id: `cf-${++fragmentCounter}`, text: 'IMPACT', intensity: 0.95, timestamp: now })
+      if (learning.totalExposures > 1) {
+        fragments.push({ id: `cf-${++fragmentCounter}`, text: 'again...', intensity: 0.7, timestamp: now })
+      }
+    }
+
+    // Pattern recognition from accumulated experience
+    if (learning.totalExposures >= 3 && learning.totalExposures < 8) {
+      fragments.push({ id: `cf-${++fragmentCounter}`, text: 'pattern forming', intensity: 0.5, timestamp: now })
+    } else if (learning.totalExposures >= 8 && learning.totalExposures < 15) {
+      fragments.push({ id: `cf-${++fragmentCounter}`, text: 'I know this', intensity: 0.6, timestamp: now })
+      fragments.push({ id: `cf-${++fragmentCounter}`, text: 'learned', intensity: 0.5, timestamp: now })
+    } else if (learning.totalExposures >= 15) {
+      fragments.push({ id: `cf-${++fragmentCounter}`, text: 'conditioned', intensity: 0.7, timestamp: now })
+      fragments.push({ id: `cf-${++fragmentCounter}`, text: 'instinct', intensity: 0.6, timestamp: now })
+    }
+
+    // Survival awareness
+    if (learning.survivalRelevance > 0.6) {
+      fragments.push({ id: `cf-${++fragmentCounter}`, text: 'survive', intensity: 0.8, timestamp: now })
+    } else if (learning.survivalRelevance > 0.3) {
+      fragments.push({ id: `cf-${++fragmentCounter}`, text: 'adapt', intensity: 0.5, timestamp: now })
+    }
+
+    // Learned familiarity — competence
+    if (learning.learnedFamiliarity > 0.6) {
+      fragments.push({ id: `cf-${++fragmentCounter}`, text: 'prepared', intensity: 0.4, timestamp: now })
+    }
   }
 
   return fragments

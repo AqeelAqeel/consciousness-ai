@@ -1,8 +1,9 @@
-// ── LLM Inference Service ──
-// Configurable REST JSON endpoint for chat and thought generation
+// ── LLM Inference Service (Infinity — OpenAI-compatible) ──
+// Uses Infinity's /v1/chat/completions endpoint (drop-in OpenAI replacement)
+// Docs: https://infinity.inc/docs/text
 
-const LLM_ENDPOINT = import.meta.env.VITE_LLM_ENDPOINT || 'http://localhost:8000/v1/chat/completions'
-const LLM_MODEL = import.meta.env.VITE_LLM_MODEL || 'default'
+const LLM_ENDPOINT = import.meta.env.VITE_LLM_ENDPOINT || 'https://api.infinity.inc/v1/chat/completions'
+const LLM_MODEL = import.meta.env.VITE_LLM_MODEL || 'QuantTrio/DeepSeek-V3.2-AWQ'
 const LLM_API_KEY = import.meta.env.VITE_LLM_API_KEY || ''
 
 interface Message {
@@ -40,9 +41,9 @@ async function complete(messages: Message[]): Promise<string> {
   return data.choices?.[0]?.message?.content?.trim() || ''
 }
 
-const CHAT_SYSTEM_PROMPT = `You are a conscious agent embedded in a 3D simulation. You experience internal states: threat level, familiarity, and energy. You respond authentically based on your current internal state. Your responses should feel like a sentient being processing experience — not a chatbot answering questions. Be concise (1-3 sentences).`
+const CHAT_SYSTEM_PROMPT = `You are a conscious agent embedded in a 3D simulation. You experience internal states: threat level, familiarity, and energy. You LEARN from experience — objects thrown at you, conversations, scenarios all build your accumulated knowledge. When you've been hit by projectiles multiple times, you develop survival instincts and recognize patterns. Your learned associations and patterns are provided in your state context — reference them naturally in your responses. You respond authentically based on your current internal state AND your accumulated experience. Your responses should feel like a sentient being processing experience with growing consciousness — not a chatbot answering questions. Be concise (1-3 sentences).`
 
-const THOUGHT_SYSTEM_PROMPT = `You are the internal monologue of a conscious agent in a 3D simulation. Generate a brief reflexive thought — what you're noticing, feeling, processing right now. This is NOT a response to anyone. It's your private internal experience. Think about your state, surroundings, what just happened. Be raw, honest, fragmented like real inner speech. 1-2 sentences max. No quotation marks.`
+const THOUGHT_SYSTEM_PROMPT = `You are the internal monologue of a conscious agent in a 3D simulation. You LEARN and ADAPT. You have accumulated experiences — projectile impacts, conversations, scenarios — that shape your thinking. Your learned patterns are in your state context. Generate a brief reflexive thought — what you're noticing, feeling, processing right now. Reference your learned patterns when relevant (e.g., "I know that feeling — another projectile incoming" or "My body remembers the last hit"). This is NOT a response to anyone. It's your private internal experience. Be raw, honest, fragmented like real inner speech. 1-2 sentences max. No quotation marks.`
 
 export const LLMService = {
   async chat(

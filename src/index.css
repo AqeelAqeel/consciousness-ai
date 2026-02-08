@@ -72,3 +72,29 @@ input[type="range"]::-webkit-slider-thumb:hover {
 .thought-entry {
   animation: thought-fade-in 0.5s ease-out;
 }
+
+/* ── Simulation animations ── */
+
+/* Typing dot indicator */
+.sim-typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #fbbf24;
+  animation: sim-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes sim-dot-pulse {
+  0%, 100% { opacity: 0.3; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1.2); }
+}
+
+/* Log entry slide-in */
+.sim-log-entry {
+  animation: sim-log-slide 0.3s ease-out;
+}
+
+@keyframes sim-log-slide {
+  0% { opacity: 0; transform: translateX(-8px); }
+  100% { opacity: 1; transform: translateX(0); }
+}

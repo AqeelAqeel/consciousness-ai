@@ -9,7 +9,6 @@ export function ChatPanel() {
   const isChatting = useStore((s) => s.isChatting)
   const activateScenario = useStore((s) => s.activateScenario)
   const activeScenario = useStore((s) => s.activeScenario)
-  const state = useStore((s) => s.state)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -36,22 +35,6 @@ export function ChatPanel() {
 
   return (
     <div className="h-full flex flex-col bg-[#0a0f0a] border-r border-green-900/30">
-      {/* Header */}
-      <div className="shrink-0 px-4 py-3 border-b border-green-900/20">
-        <div className="flex items-center gap-2">
-          <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
-          <span className="text-sm font-mono tracking-[0.3em] text-green-500/60 uppercase">
-            Agent Interface
-          </span>
-        </div>
-        {/* State micro-display */}
-        <div className="flex gap-4 mt-2">
-          <StatePill label="THR" value={state.threat} color="#ff4444" />
-          <StatePill label="FAM" value={state.familiarity} color="#33cc66" />
-          <StatePill label="NRG" value={state.energy} color="#4488ff" />
-        </div>
-      </div>
-
       {/* Scenarios */}
       <div className="shrink-0 px-3 py-2 border-b border-green-900/15 overflow-x-auto">
         <div className="text-xs font-mono text-green-600/30 tracking-widest uppercase mb-1.5">
@@ -83,18 +66,6 @@ export function ChatPanel() {
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-3 scrollbar-thin">
-        {chatMessages.length === 0 && (
-          <div className="text-center py-8">
-            <div className="text-green-600/20 text-sm font-mono leading-relaxed">
-              <div className="mb-2 text-green-500/30">{'>'} SYSTEM READY</div>
-              <div>Type a message to interact with the agent.</div>
-              <div className="mt-1">The agent's responses are conditioned</div>
-              <div>on its current internal state.</div>
-              <div className="mt-3 text-green-600/15">Try: "I'm afraid" or "Everything is calm"</div>
-            </div>
-          </div>
-        )}
-
         {chatMessages.map((msg) => (
           <div
             key={msg.id}
@@ -105,23 +76,18 @@ export function ChatPanel() {
                 max-w-[85%] px-3 py-2 rounded-lg text-sm font-mono leading-relaxed
                 ${msg.role === 'user'
                   ? 'bg-green-500/10 text-green-400/80 border border-green-500/20'
-                  : 'bg-green-900/15 text-green-300/60 border border-green-900/25'
+                  : msg.role === 'agent' && msg.fallback
+                    ? 'bg-yellow-900/10 text-yellow-300/50 border border-yellow-900/20'
+                    : 'bg-green-900/15 text-green-300/60 border border-green-900/25'
                 }
               `}
             >
               {msg.role === 'agent' && (
                 <div className="text-[11px] text-green-600/30 tracking-widest uppercase mb-1">
-                  AGENT
+                  {msg.fallback ? 'AGENT (offline)' : 'AGENT'}
                 </div>
               )}
               <div>{msg.text}</div>
-              {msg.stateSnapshot && (
-                <div className="flex gap-3 mt-1.5 pt-1.5 border-t border-green-900/15">
-                  <MicroBar label="T" value={msg.stateSnapshot.threat} color="#ff4444" />
-                  <MicroBar label="F" value={msg.stateSnapshot.familiarity} color="#33cc66" />
-                  <MicroBar label="E" value={msg.stateSnapshot.energy} color="#4488ff" />
-                </div>
-              )}
             </div>
           </div>
         ))}
@@ -169,44 +135,6 @@ export function ChatPanel() {
             Send
           </button>
         </div>
-      </div>
-    </div>
-  )
-}
-
-function StatePill({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="text-[11px] font-mono text-white/20">{label}</span>
-      <div className="w-16 h-1.5 bg-white/5 rounded-full overflow-hidden">
-        <div
-          className="h-full rounded-full transition-all duration-500"
-          style={{
-            width: `${value * 100}%`,
-            backgroundColor: color + '60',
-            boxShadow: `0 0 4px ${color}30`,
-          }}
-        />
-      </div>
-      <span className="text-[11px] font-mono tabular-nums" style={{ color: color + '50' }}>
-        {(value * 100).toFixed(0)}
-      </span>
-    </div>
-  )
-}
-
-function MicroBar({ label, value, color }: { label: string; value: number; color: string }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="text-[11px] font-mono" style={{ color: color + '40' }}>{label}</span>
-      <div className="w-10 h-1 bg-white/5 rounded-full overflow-hidden">
-        <div
-          className="h-full rounded-full"
-          style={{
-            width: `${value * 100}%`,
-            backgroundColor: color + '50',
-          }}
-        />
       </div>
     </div>
   )

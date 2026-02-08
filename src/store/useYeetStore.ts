@@ -62,6 +62,9 @@ interface YeetStore {
   // Character reaction
   impactDirection: [number, number, number] | null
   clearImpact: () => void
+
+  // Full reset
+  resetAll: () => void
 }
 
 export const useYeetStore = create<YeetStore>((set, get) => ({
@@ -165,4 +168,23 @@ export const useYeetStore = create<YeetStore>((set, get) => ({
 
   impactDirection: null,
   clearImpact: () => set({ impactDirection: null }),
+
+  resetAll: () => {
+    set({
+      hits: 0,
+      thrown: 0,
+      combo: 0,
+      lastHitTime: 0,
+      lastVelocity: 0,
+      selectedType: 'baseball',
+      power: 50,
+      angle: 35,
+      gravity: 9.8,
+      spin: 0,
+      chaosEnabled: false,
+      chaosAmount: 0,
+      projectiles: [],
+      impactDirection: null,
+    })
+  },
 }))
