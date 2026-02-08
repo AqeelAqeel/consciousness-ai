@@ -167,17 +167,29 @@ export function BrainCenter() {
   const deepRegions = brainRegions.filter((r) => REGION_MAP[r.id]?.layer === 'deep')
   const stemRegions = brainRegions.filter((r) => REGION_MAP[r.id]?.layer === 'stem')
 
+  // Overall activity level — used to control header/EEG dormancy
+  const overallActivity = brainRegions.length > 0
+    ? brainRegions.reduce((sum, r) => sum + r.activation, 0) / brainRegions.length
+    : 0
+  const isActive = overallActivity > 0.05
+
   return (
     <div className="h-full flex flex-col bg-[#080810] border-l border-blue-900/20 overflow-y-auto scrollbar-thin">
       {/* Header */}
       <div className="shrink-0 px-4 py-3 border-b border-blue-900/15">
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-blue-500/50 animate-pulse" />
-          <span className="text-[10px] font-mono tracking-[0.3em] text-blue-400/40 uppercase">
+          <div className={`w-2 h-2 rounded-full transition-all duration-700 ${
+            isActive
+              ? 'bg-blue-500/70 shadow-[0_0_6px_rgba(59,130,246,0.5)] animate-pulse'
+              : 'bg-white/[0.08]'
+          }`} />
+          <span className={`text-[10px] font-mono tracking-[0.3em] uppercase transition-colors duration-500 ${
+            isActive ? 'text-blue-400/50' : 'text-white/15'
+          }`}>
             Neural Activity
           </span>
           <span className="text-[8px] font-mono text-white/10 ml-auto">
-            {brainRegions.length} regions
+            {isActive ? `${brainRegions.filter(r => r.activation > 0.05).length} active` : 'idle'}
           </span>
         </div>
       </div>
@@ -197,7 +209,9 @@ export function BrainCenter() {
       <RegionGroup label="Brainstem / Cerebellum" regions={stemRegions} />
 
       {/* Neural metrics */}
-      <div className="px-4 py-3 mt-auto border-t border-blue-900/10 space-y-2">
+      <div className={`px-4 py-3 mt-auto border-t border-blue-900/10 space-y-2 transition-opacity duration-700 ${
+        isActive ? 'opacity-100' : 'opacity-30'
+      }`}>
         <div className="text-[8px] font-mono tracking-[0.2em] text-white/15 uppercase mb-1">
           Neural Metrics
         </div>
@@ -238,7 +252,7 @@ export function BrainCenter() {
           <div className="text-[7px] font-mono text-white/10 uppercase tracking-wider mb-1">
             Neural Oscillation
           </div>
-          <EEGWave threat={state.threat} energy={state.energy} />
+          <EEGWave threat={state.threat} energy={state.energy} active={isActive} />
         </div>
       </div>
     </div>
@@ -409,16 +423,27 @@ function drawRegionNode(
   region: BrainRegion,
   mapEntry: typeof REGION_MAP[string],
 ) {
-  const pulse = Math.sin(now * 0.003 + region.activation * 3) * 0.5 + 0.5
-  const alpha = region.activation * (0.15 + pulse * 0.55)
-
   const cx = w * mapEntry.cx / 100
   const cy = h * mapEntry.cy / 100
   const rx = w * mapEntry.rx / 100
   const ry = h * mapEntry.ry / 100
 
-  // Outer glow (larger for more active regions)
-  if (region.activation > 0.1) {
+  // Dormant state: barely visible outline, no glow at all
+  if (region.activation < 0.05) {
+    ctx.strokeStyle = 'rgba(100, 130, 180, 0.04)'
+    ctx.lineWidth = 0.5
+    ctx.beginPath()
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2)
+    ctx.stroke()
+    return
+  }
+
+  // Only pulse when actually active
+  const pulse = Math.sin(now * 0.003 + region.activation * 3) * 0.5 + 0.5
+  const alpha = region.activation * (0.1 + pulse * 0.6)
+
+  // Outer glow (only for meaningfully active regions)
+  if (region.activation > 0.2) {
     const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.max(rx, ry) * 2.5)
     gradient.addColorStop(0, region.color + Math.floor(alpha * 140).toString(16).padStart(2, '0'))
     gradient.addColorStop(0.4, region.color + Math.floor(alpha * 50).toString(16).padStart(2, '0'))
@@ -429,14 +454,14 @@ function drawRegionNode(
     ctx.fill()
   }
 
-  // Core region
+  // Core region fill
   ctx.fillStyle = region.color + Math.floor(alpha * 255).toString(16).padStart(2, '0')
   ctx.beginPath()
   ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2)
   ctx.fill()
 
-  // Bright center dot
-  if (region.activation > 0.2) {
+  // Bright center dot (only when solidly active)
+  if (region.activation > 0.3) {
     const dotAlpha = region.activation * (0.3 + pulse * 0.5)
     ctx.fillStyle = '#ffffff' + Math.floor(dotAlpha * 200).toString(16).padStart(2, '0')
     ctx.beginPath()
@@ -466,10 +491,10 @@ function drawRegionNode(
     ctx.stroke()
   }
 
-  // Label (only show for somewhat active regions to reduce clutter)
-  if (region.activation > 0.15) {
+  // Label (only show when actively firing)
+  if (region.activation > 0.2) {
     ctx.font = `${Math.round(w * 0.018)}px monospace`
-    ctx.fillStyle = `rgba(255,255,255,${0.15 + region.activation * 0.35})`
+    ctx.fillStyle = `rgba(255,255,255,${region.activation * 0.45})`
     ctx.textAlign = 'center'
     ctx.fillText(mapEntry.label, cx, cy + ry + w * 0.025)
   }
@@ -522,11 +547,11 @@ function RegionGroup({ label, regions }: { label: string; regions: BrainRegion[]
           return (
             <div key={region.id} className="flex items-center gap-1.5">
               <div
-                className="w-1.5 h-1.5 rounded-full shrink-0"
+                className="w-1.5 h-1.5 rounded-full shrink-0 transition-all duration-500"
                 style={{
-                  backgroundColor: region.color,
-                  opacity: 0.3 + region.activation * 0.7,
-                  boxShadow: region.activation > 0.5 ? `0 0 4px ${region.color}40` : 'none',
+                  backgroundColor: region.activation > 0.05 ? region.color : 'rgba(100,130,180,0.15)',
+                  opacity: region.activation > 0.05 ? region.activation : 0.1,
+                  boxShadow: region.activation > 0.4 ? `0 0 6px ${region.color}60` : 'none',
                 }}
               />
               <span className="text-[7px] font-mono text-white/20 w-16 shrink-0 truncate">
@@ -537,8 +562,10 @@ function RegionGroup({ label, regions }: { label: string; regions: BrainRegion[]
                   className="h-full rounded-full transition-all duration-500"
                   style={{
                     width: `${region.activation * 100}%`,
-                    background: `linear-gradient(90deg, ${region.color}25, ${region.color}60)`,
-                    boxShadow: `0 0 6px ${region.color}15`,
+                    background: region.activation > 0.05
+                      ? `linear-gradient(90deg, ${region.color}25, ${region.color}60)`
+                      : 'transparent',
+                    boxShadow: region.activation > 0.3 ? `0 0 6px ${region.color}25` : 'none',
                   }}
                 />
               </div>
@@ -583,7 +610,7 @@ function MetricRow({ label, value, color }: { label: string; value: number; colo
   )
 }
 
-function EEGWave({ threat, energy }: { threat: number; energy: number }) {
+function EEGWave({ threat, energy, active }: { threat: number; energy: number; active: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animRef = useRef<number>(0)
 
@@ -598,10 +625,23 @@ function EEGWave({ threat, energy }: { threat: number; energy: number }) {
 
     const draw = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height)
-      const now = Date.now()
       const w = canvas.width
       const h = canvas.height
       const mid = h / 2
+
+      if (!active) {
+        // Flat baseline when idle
+        ctx.strokeStyle = 'rgba(100, 130, 180, 0.06)'
+        ctx.lineWidth = 0.8
+        ctx.beginPath()
+        ctx.moveTo(0, mid)
+        ctx.lineTo(w, mid)
+        ctx.stroke()
+        animRef.current = requestAnimationFrame(draw)
+        return
+      }
+
+      const now = Date.now()
 
       // Alpha wave (calm / energy)
       ctx.strokeStyle = `rgba(68, 136, 255, ${0.1 + energy * 0.2})`
@@ -645,7 +685,7 @@ function EEGWave({ threat, energy }: { threat: number; energy: number }) {
 
     animRef.current = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(animRef.current)
-  }, [threat, energy])
+  }, [threat, energy, active])
 
   return <canvas ref={canvasRef} className="w-full h-5 rounded" />
 }

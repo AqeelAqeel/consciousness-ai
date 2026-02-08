@@ -4,6 +4,15 @@ import { SCENARIOS } from '../store/useStore'
 import { useSimulationStore, SIMULATIONS } from '../store/useSimulationStore'
 import { useYeetStore } from '../store/useYeetStore'
 
+// Icons for scenarios (matching the sim button style)
+const SCENARIO_ICONS: Record<string, string> = {
+  'dark-alley': '🌑',
+  'reunion': '🤝',
+  'presentation': '🎤',
+  'hunger': '🍽',
+  'flow-state': '✨',
+}
+
 export function ChatPanel() {
   const [input, setInput] = useState('')
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -63,9 +72,7 @@ export function ChatPanel() {
 
   return (
     <div className="h-full flex flex-col bg-[#0a0f0a] border-r border-green-900/30 relative">
-      {/* ── Compact button row: Sims + Scenarios + Reset + Chevron ── */}
-
-      {/* ── Compact button row: Sims + Scenarios + Reset + Chevron ── */}
+      {/* ── Unified button row ── */}
       <div className="shrink-0 px-2 py-1.5 border-b border-green-900/15 flex items-center gap-1 flex-wrap">
         {/* Simulation buttons */}
         {SIMULATIONS.map((sim) => {
@@ -97,35 +104,36 @@ export function ChatPanel() {
           )
         })}
 
-        {/* Divider dot */}
-        <span className="text-white/10 text-[8px] mx-0.5">●</span>
-
-        {/* Scenario buttons */}
-        {SCENARIOS.map((s) => (
-          <button
-            key={s.id}
-            onClick={() => activateScenario(s)}
-            title={s.description}
-            className={`
-              px-1.5 py-1 rounded text-[10px] font-mono transition-all duration-150 border
-              ${activeScenario?.id === s.id
-                ? 'bg-green-500/20 text-green-400 border-green-500/40'
-                : 'bg-green-900/10 text-green-600/35 border-green-900/20 hover:bg-green-900/20 hover:text-green-500/60'
-              }
-            `}
-          >
-            {s.label}
-          </button>
-        ))}
+        {/* Scenario buttons (same style) */}
+        {SCENARIOS.map((s) => {
+          const isActive = activeScenario?.id === s.id
+          return (
+            <button
+              key={s.id}
+              onClick={() => activateScenario(s)}
+              title={s.description}
+              className={`
+                px-2 py-1 rounded text-[11px] font-mono transition-all duration-150 border flex items-center gap-1
+                ${isActive
+                  ? 'border-green-500/50 bg-green-500/15 text-green-300'
+                  : 'border-white/[0.06] bg-white/[0.02] text-white/30 hover:border-white/15 hover:text-white/50'
+                }
+              `}
+            >
+              <span className="text-xs">{SCENARIO_ICONS[s.id] || '●'}</span>
+              <span className="tracking-wide uppercase">{s.label}</span>
+            </button>
+          )
+        })}
 
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Reset (when there's any content/state) */}
+        {/* Reset */}
         {hasContent && (
           <button
             onClick={handleReset}
-            title="Reset everything to T=0"
+            title="Reset everything"
             className="px-2 py-1 rounded text-[10px] font-mono tracking-wider uppercase
               border border-red-500/20 text-red-400/50 bg-red-900/10
               hover:border-red-500/35 hover:text-red-300/70 hover:bg-red-900/20
@@ -136,7 +144,7 @@ export function ChatPanel() {
         )}
 
         {/* Chevron toggle */}
-        {(isRunning || isComplete || activeSim) && (
+        {(isRunning || isComplete || activeSim || activeScenario) && (
           <button
             onClick={() => setDrawerOpen(!drawerOpen)}
             className="w-5 h-5 rounded flex items-center justify-center
@@ -152,9 +160,8 @@ export function ChatPanel() {
       </div>
 
       {/* ── Slide-down drawer (details/progress) ── */}
-      {drawerOpen && (isRunning || isComplete || activeSim) && (
+      {drawerOpen && (isRunning || isComplete || activeSim || activeScenario) && (
         <div className="shrink-0 bg-black/40 border-b border-white/[0.05] overflow-hidden sim-drawer-enter">
-          {/* Sim progress bar */}
           {(isRunning || isComplete) && activeSim && (
             <div className="h-1 bg-white/[0.03]">
               <div
@@ -167,7 +174,6 @@ export function ChatPanel() {
             </div>
           )}
           <div className="px-3 py-2 space-y-1.5">
-            {/* Active sim info */}
             {activeSim && (
               <div className="flex items-start gap-2">
                 {isRunning && <span className="sim-typing-dot shrink-0 mt-0.5" />}
@@ -184,22 +190,15 @@ export function ChatPanel() {
                     {stepNarration || activeSim.description}
                   </div>
                 </div>
-                <button
-                  onClick={() => setDrawerOpen(false)}
-                  className="text-white/15 hover:text-white/30 text-xs shrink-0"
-                >✕</button>
+                <button onClick={() => setDrawerOpen(false)} className="text-white/15 hover:text-white/30 text-xs shrink-0">✕</button>
               </div>
             )}
-            {/* Active scenario info */}
             {activeScenario && !activeSim && (
               <div className="flex items-center justify-between">
                 <div className="text-[11px] font-mono text-green-400/35">
-                  {activeScenario.label}: {activeScenario.description}
+                  {SCENARIO_ICONS[activeScenario.id] || '●'} {activeScenario.label} — {activeScenario.description}
                 </div>
-                <button
-                  onClick={() => setDrawerOpen(false)}
-                  className="text-white/15 hover:text-white/30 text-xs shrink-0"
-                >✕</button>
+                <button onClick={() => setDrawerOpen(false)} className="text-white/15 hover:text-white/30 text-xs shrink-0">✕</button>
               </div>
             )}
           </div>

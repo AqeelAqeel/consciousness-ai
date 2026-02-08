@@ -131,10 +131,192 @@ export function MechanicalAgent() {
   }, [])
 
   // ── Animation loop ──
-  useFrame(() => {
+  useFrame((_, delta) => {
     const bodyState = useStore.getState().bodyState
     const time = Date.now() * 0.001
+    const d = Math.min(delta, 0.05)
 
+    // ═══════════════════════════════════════════════════════
+    // ROOT-LEVEL: Dodge evasion + Impact recoil
+    // The agent physically moves based on learned experience
+    // ═══════════════════════════════════════════════════════
+    if (rootRef.current) {
+      const consciousnessState = useStore.getState()
+      const learnedPatterns = consciousnessState.learnedPatterns
+      const dangerAssessment = consciousnessState.lastDangerAssessment
+      const projectiles = useYeetStore.getState().projectiles
+      const impactDir = useYeetStore.getState().impactDirection
+      const now = Date.now()
+
+      // ── Calculate learned dodge ability ──
+      // More experience = better evasion. Based on accumulated patterns.
+      const totalExposures = learnedPatterns.reduce((sum, p) => sum + p.exposureCount, 0)
+      const maxFamiliarity = learnedPatterns.reduce((max, p) => Math.max(max, p.familiarity), 0)
+      const survivalRelevance = learnedPatterns.reduce((max, p) => Math.max(max, p.survivalRelevance), 0)
+
+      // ── LLM danger assessment amplifier ──
+      // If the LLM assessed recent danger, amplify dodge behavior
+      let llmDangerBoost = 0
+      let llmPreferredDirection = 0 // -1 left, 0 none, 1 right
+      if (dangerAssessment && (now - dangerAssessment.timestamp) < 5000) {
+        llmDangerBoost = dangerAssessment.dangerLevel // 0-1
+        const dir = dangerAssessment.bodyDirective.toUpperCase()
+        if (dir.includes('LEFT')) llmPreferredDirection = -1
+        else if (dir.includes('RIGHT')) llmPreferredDirection = 1
+        else if (dir.includes('FLEE') || dir.includes('BACK')) llmPreferredDirection = 0 // backward handled below
+      }
+      const threatBias = consciousnessState.getLearnedThreatBias()
+
+      // Dodge skill scales with experience: 0 at start → ramps FAST with dangerous objects
+      // LLM danger assessment directly boosts dodge ability (the "neocortex" tells the body to move)
+      const baseDodgeSkill = Math.min(0.95, 
+        (totalExposures * 0.08) +          // 3 anvil hits → 0.24, 6 hits → 0.48
+        (maxFamiliarity * 0.4) +           // familiarity now scales faster too 
+        (survivalRelevance * 0.35) +       // survival relevance matters a lot
+        (threatBias * 0.2)                 // accumulated threat awareness
+      )
+      // LLM danger boost: if LLM says "this is 0.9 danger", that directly amplifies dodge
+      const dodgeSkill = Math.min(0.98, baseDodgeSkill + llmDangerBoost * 0.3)
+
+      // Perception range: even untrained agent has some awareness, trained agent sees far
+      // LLM danger assessment also extends awareness ("I KNOW this is dangerous")
+      const perceptionRange = 3.0 + dodgeSkill * 5.0 + llmDangerBoost * 2.0 // 3 to 10 units
+
+      // ── Detect incoming projectiles ──
+      let closestDist = Infinity
+      let closestDir = new THREE.Vector3()
+      let closestApproaching = false
+
+      const currentPos = new THREE.Vector3(
+        dodgeOffset.current.x,
+        AGENT_CENTER_Y,
+        dodgeOffset.current.z,
+      )
+
+      for (const proj of projectiles) {
+        const projPos = new THREE.Vector3(...proj.position)
+        // Estimate current position using velocity (projectiles move in useFrame too)
+        projPos.add(new THREE.Vector3(...proj.velocity).multiplyScalar(0.016))
+
+        const toAgent = currentPos.clone().sub(projPos)
+        const dist = toAgent.length()
+
+        // Check if projectile is approaching (velocity pointing toward agent)
+        const vel = new THREE.Vector3(...proj.velocity)
+        const approaching = vel.dot(toAgent.normalize()) > 0
+
+        if (dist < perceptionRange && approaching && dist < closestDist) {
+          closestDist = dist
+          closestDir = toAgent.clone().normalize()
+          closestApproaching = true
+        }
+      }
+
+      // ── Evasion: dodge sideways from incoming projectile ──
+      // With learned skill + LLM danger assessment, the agent AGGRESSIVELY moves out of the way
+      if (closestApproaching && dodgeSkill > 0.02 && now - lastDodgeTime.current > 100) {
+        // Dodge perpendicular to the incoming direction (sideways)
+        const up = new THREE.Vector3(0, 1, 0)
+        const lateral = new THREE.Vector3().crossVectors(closestDir, up).normalize()
+
+        // Choose dodge direction:
+        // 1. LLM directive takes priority if available
+        // 2. Otherwise prefer away from edge
+        // 3. Otherwise random
+        let dodgeSide: number
+        if (llmPreferredDirection !== 0) {
+          dodgeSide = llmPreferredDirection // LLM said go left or right
+        } else if (dodgeOffset.current.x > 0.3) {
+          dodgeSide = -1
+        } else if (dodgeOffset.current.x < -0.3) {
+          dodgeSide = 1
+        } else {
+          dodgeSide = Math.random() > 0.5 ? 1 : -1
+        }
+
+        const urgency = Math.max(0.3, 1 - closestDist / perceptionRange)
+        // LLM danger level directly amplifies dodge magnitude
+        const dangerAmplifier = 1 + llmDangerBoost * 1.5 // up to 2.5x multiplier
+
+        // Dodge magnitude: MUCH bigger — skilled agent jumps 2+ units sideways
+        // An anvil (dangerLevel 0.9) with skilled agent: (0.3 + 0.95*2.5) * 1.0 * 2.35 = ~6.7 units
+        const dodgeMagnitude = (0.3 + dodgeSkill * 2.5) * urgency * dangerAmplifier
+
+        // Also add backward dodge — FLEE directive makes this much stronger
+        const fleeMultiplier = dangerAssessment?.bodyDirective?.includes('FLEE') ? 1.5 : 0.5
+        const backward = closestDir.clone().multiplyScalar(-dodgeMagnitude * fleeMultiplier)
+
+        dodgeTarget.current.set(
+          lateral.x * dodgeSide * dodgeMagnitude + backward.x,
+          0,
+          lateral.z * dodgeSide * dodgeMagnitude + backward.z,
+        )
+
+        // Wide clamp — agent can really move across the scene
+        dodgeTarget.current.x = THREE.MathUtils.clamp(dodgeTarget.current.x, -3.0, 3.0)
+        dodgeTarget.current.z = THREE.MathUtils.clamp(dodgeTarget.current.z, -2.0, 2.0)
+
+        lastDodgeTime.current = now
+        isRecovering.current = false
+      } else if (!closestApproaching && !isRecovering.current) {
+        // No incoming threats — slowly return to center
+        isRecovering.current = true
+        dodgeTarget.current.set(0, 0, 0)
+      }
+
+      // ── Impact recoil — heavier objects hit HARDER ──
+      if (impactDir) {
+        const impactMass = useYeetStore.getState().lastImpactMass ?? 1
+        // Recoil scales with mass: fish gives a nudge, anvil sends you flying
+        const recoilStrength = (0.1 + impactMass * 0.04) * (1 + threatBias * 0.3)
+        recoilVel.current.set(
+          impactDir[0] * recoilStrength,
+          Math.abs(impactDir[1]) * recoilStrength * 0.7 + (impactMass > 5 ? 0.08 : 0), // heavy objects pop you up
+          impactDir[2] * recoilStrength,
+        )
+        useYeetStore.getState().clearImpact()
+      }
+
+      // ── Apply physics ──
+      // Lerp toward dodge target — FAST when evading, gentle when recovering
+      const dodgeLerpSpeed = isRecovering.current ? 2.0 : (5 + dodgeSkill * 12) // trained agent snaps into dodge
+      dodgeOffset.current.x = THREE.MathUtils.lerp(dodgeOffset.current.x, dodgeTarget.current.x, d * dodgeLerpSpeed)
+      dodgeOffset.current.y = THREE.MathUtils.lerp(dodgeOffset.current.y, dodgeTarget.current.y, d * dodgeLerpSpeed)
+      dodgeOffset.current.z = THREE.MathUtils.lerp(dodgeOffset.current.z, dodgeTarget.current.z, d * dodgeLerpSpeed)
+
+      // Apply and decay recoil velocity
+      dodgeOffset.current.x += recoilVel.current.x
+      dodgeOffset.current.y += recoilVel.current.y
+      dodgeOffset.current.z += recoilVel.current.z
+      recoilVel.current.multiplyScalar(0.85) // damping
+
+      // Ground constraint
+      if (dodgeOffset.current.y < 0) dodgeOffset.current.y = 0
+      // Decay y back to 0
+      dodgeOffset.current.y *= 0.92
+
+      // Apply to root
+      rootRef.current.position.x = dodgeOffset.current.x
+      rootRef.current.position.y = dodgeOffset.current.y
+      rootRef.current.position.z = dodgeOffset.current.z
+
+      // Write agent world position to shared store (for projectile collision)
+      // Agent center in world = dodge offset * scale(1.5) + base center
+      useYeetStore.getState().setAgentPosition([
+        dodgeOffset.current.x * 1.5,
+        AGENT_CENTER_Y + dodgeOffset.current.y * 1.5,
+        dodgeOffset.current.z * 1.5,
+      ])
+
+      // Lean body into dodge direction (subtle tilt)
+      const leanAmount = (dodgeOffset.current.x - rootRef.current.rotation.z * 0.5)
+      rootRef.current.rotation.z = THREE.MathUtils.lerp(rootRef.current.rotation.z, -leanAmount * 0.15, d * 4)
+      rootRef.current.rotation.x = THREE.MathUtils.lerp(rootRef.current.rotation.x, dodgeOffset.current.z * 0.1, d * 3)
+    }
+
+    // ═══════════════════════════════════════════════════════
+    // PER-PART: Body pose animation (existing system)
+    // ═══════════════════════════════════════════════════════
     for (const partId of Object.keys(bodyState) as BodyPartId[]) {
       const group = refs.current[partId]
       if (!group) continue
@@ -204,7 +386,7 @@ export function MechanicalAgent() {
   //        → hipR → thighR → shinR → footR
 
   return (
-    <group scale={1.5}>
+    <group ref={rootRef} scale={1.5}>
     <group ref={setRef('pelvis')} position={[REST.pelvis[0], REST.pelvis[1], REST.pelvis[2]]}>
       {/* Pelvis geometry */}
       <mesh material={materials.pelvis.body}>

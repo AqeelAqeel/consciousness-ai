@@ -15,11 +15,11 @@ export interface ProjectileData {
 }
 
 const PROJECTILE_CONFIGS: Record<Exclude<ProjectileType, 'random'>, { mass: number; radius: number; scale: number }> = {
-  baseball:    { mass: 1,   radius: 0.06, scale: 0.35 },
-  bowling:     { mass: 3,   radius: 0.12, scale: 0.28 },
-  watermelon:  { mass: 4,   radius: 0.14, scale: 0.28 },
-  anvil:       { mass: 8,   radius: 0.16, scale: 0.25 },
-  fish:        { mass: 0.5, radius: 0.08, scale: 0.3  },
+  baseball:    { mass: 1,   radius: 0.15, scale: 0.8  },
+  bowling:     { mass: 3,   radius: 0.25, scale: 0.55 },
+  watermelon:  { mass: 4,   radius: 0.28, scale: 0.55 },
+  anvil:       { mass: 8,   radius: 0.3,  scale: 0.5  },
+  fish:        { mass: 0.5, radius: 0.18, scale: 0.65 },
 }
 
 const TYPES: Exclude<ProjectileType, 'random'>[] = ['baseball', 'bowling', 'watermelon', 'anvil', 'fish']
@@ -61,7 +61,12 @@ interface YeetStore {
 
   // Character reaction
   impactDirection: [number, number, number] | null
+  lastImpactMass: number | null
   clearImpact: () => void
+
+  // Agent dodge position (written by MechanicalAgent, read by Projectile for collision)
+  agentPosition: [number, number, number]
+  setAgentPosition: (pos: [number, number, number]) => void
 
   // Full reset
   resetAll: () => void
@@ -103,33 +108,38 @@ export const useYeetStore = create<YeetStore>((set, get) => ({
     const config = PROJECTILE_CONFIGS[type]
 
     let launchAngle = angle * (Math.PI / 180)
-    let launchPower = power * 0.06 // scaled for small scene
+    let launchPower = power * 0.08 // scaled for scene
     let spreadX = 0
     let spreadZ = 0
 
     if (chaosEnabled) {
       const c = chaosAmount / 100
-      launchAngle += (Math.random() - 0.5) * c * 0.6
-      launchPower += (Math.random() - 0.5) * c * launchPower * 0.4
-      spreadX = (Math.random() - 0.5) * c * 1.0
-      spreadZ = (Math.random() - 0.5) * c * 0.8
+      launchAngle += (Math.random() - 0.5) * c * 0.5
+      launchPower += (Math.random() - 0.5) * c * launchPower * 0.3
+      spreadX = (Math.random() - 0.5) * c * 0.6
+      spreadZ = (Math.random() - 0.5) * c * 0.4
     }
 
-    // Launch from the left side of the scene so the arc is visible
+    // Launch from front-left of camera so the arc is clearly visible
     // Camera is at [0, 2.0, 4.5] looking at [0, 1.5, 0]
-    const startPos: [number, number, number] = [-3.5 + spreadX, 1.0 + spreadZ * 0.3, 2.0]
+    const startPos: [number, number, number] = [-2.0 + spreadX, 2.0 + spreadZ * 0.2, 3.0]
 
     // Direction toward Agent at origin (y=1.5 center, agent scaled 1.5x)
     const targetY = 1.5
     const dx = 0 - startPos[0]
-    const dy = targetY - startPos[1]
     const dz = 0 - startPos[2]
-    const len = Math.sqrt(dx * dx + dz * dz)
-    const dirX = dx / len
-    const dirZ = dz / len
+    const flatDist = Math.sqrt(dx * dx + dz * dz)
+    const dirX = dx / flatDist
+    const dirZ = dz / flatDist
+
+    // Compute velocity to reach agent despite gravity
+    // Using projectile motion: need enough horizontal speed to cover flatDist
+    // and enough vertical speed to arc and arrive at targetY
+    const tFlight = flatDist / (launchPower * Math.cos(launchAngle) + 0.01) // estimated flight time
+    const neededVy = (targetY - startPos[1]) / tFlight + 0.5 * gravity * tFlight // compensate for gravity
 
     const vx = dirX * launchPower * Math.cos(launchAngle)
-    const vy = launchPower * Math.sin(launchAngle) + dy * 0.35
+    const vy = Math.max(neededVy, launchPower * Math.sin(launchAngle) * 0.5) // ensure upward arc
     const vz = dirZ * launchPower * Math.cos(launchAngle)
 
     const projectile: ProjectileData = {
@@ -169,7 +179,11 @@ export const useYeetStore = create<YeetStore>((set, get) => ({
   },
 
   impactDirection: null,
-  clearImpact: () => set({ impactDirection: null }),
+  lastImpactMass: null,
+  clearImpact: () => set({ impactDirection: null, lastImpactMass: null }),
+
+  agentPosition: [0, 1.5, 0],
+  setAgentPosition: (pos) => set({ agentPosition: pos }),
 
   resetAll: () => {
     set({

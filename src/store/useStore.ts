@@ -95,6 +95,17 @@ export interface CognitiveStrategy {
   type: 'defensive' | 'exploratory' | 'integrative' | 'predictive'
 }
 
+// ── Consciousness Vessels ──
+export type VesselId = 'perception' | 'learning' | 'memory' | 'beliefs' | 'meta' | 'consciousness'
+
+export interface VesselEntry {
+  id: string
+  content: string
+  timestamp: number
+  importance: number      // 0–1
+  source: string
+}
+
 /** Compute cognition from the current learned patterns + ISV + associations */
 export function computeCognition(
   learnedPatterns: LearnedPattern[],
@@ -329,8 +340,30 @@ interface EngineStore {
   recentChatActivity: number  // 0-1, decays over time — how recently a chat exchange happened
   registerChatActivity: () => void
 
+  // LLM-derived danger assessment — parsed by body/dodge system
+  lastDangerAssessment: {
+    dangerLevel: number        // 0-1, how lethal is this object
+    bodyDirective: string      // e.g. 'DODGE_LEFT', 'FLEE', 'BRACE'
+    projectileType: string
+    mass: number
+    timestamp: number
+  } | null
+
   // Cognition (computed from learning + ISV)
   cognition: CognitionState
+
+  // ── Consciousness Vessels ──
+  crystalMemories: VesselEntry[]
+  beliefs: VesselEntry[]
+  metaInsights: VesselEntry[]
+  vesselSummaries: Record<VesselId, string>
+  vesselGenerating: Record<VesselId, boolean>
+  synthesizeVesselSummary: (vesselId: VesselId) => Promise<void>
+  maybeGenerateVesselContent: () => void
+  _lastCrystallizeTime: number
+  _lastBeliefTime: number
+  _lastMetaTime: number
+  _lastCognitionPhase: CognitionState['phase']
 
   // Session tracking
   sessionStartedAt: number   // timestamp of first meaningful action (0 = pristine)
@@ -394,6 +427,41 @@ function getSceneContext(
   }
 
   if (extra) lines.push(extra)
+  return lines.join('\n')
+}
+
+/** Build extended context including consciousness vessel contents for system prompt injection */
+function getVesselContext(
+  crystalMemories: VesselEntry[],
+  beliefs: VesselEntry[],
+  metaInsights: VesselEntry[],
+): string {
+  const lines: string[] = []
+
+  if (crystalMemories.length > 0) {
+    lines.push('')
+    lines.push('Crystal memories (permanent knowledge):')
+    for (const m of crystalMemories.slice(-5)) {
+      lines.push(`  - ${m.content}`)
+    }
+  }
+
+  if (beliefs.length > 0) {
+    lines.push('')
+    lines.push('Core beliefs (convictions from experience):')
+    for (const b of beliefs.slice(-5)) {
+      lines.push(`  - ${b.content}`)
+    }
+  }
+
+  if (metaInsights.length > 0) {
+    lines.push('')
+    lines.push('Meta-cognitive insights (self-awareness):')
+    for (const i of metaInsights.slice(-3)) {
+      lines.push(`  - ${i.content}`)
+    }
+  }
+
   return lines.join('\n')
 }
 
@@ -557,7 +625,8 @@ export const useStore = create<EngineStore>((set, get) => ({
       content: m.text,
     }))
 
-    const ctx = getSceneContext(newState, store.interpretation, store.associations, store.learnedPatterns)
+    const vesselCtx = getVesselContext(store.crystalMemories, store.beliefs, store.metaInsights)
+    const ctx = getSceneContext(newState, store.interpretation, store.associations, store.learnedPatterns, vesselCtx)
 
     try {
       const response = await LLMService.chat(text, history, ctx)
@@ -573,7 +642,8 @@ export const useStore = create<EngineStore>((set, get) => ({
 
       // Generate reactive thought about this exchange
       const currentStore = get()
-      const reactiveCtx = getSceneContext(currentStore.state, currentStore.interpretation, currentStore.associations, currentStore.learnedPatterns)
+      const reactiveVesselCtx = getVesselContext(currentStore.crystalMemories, currentStore.beliefs, currentStore.metaInsights)
+      const reactiveCtx = getSceneContext(currentStore.state, currentStore.interpretation, currentStore.associations, currentStore.learnedPatterns, reactiveVesselCtx)
       LLMService.reactToChat(text, response, reactiveCtx).then((thought) => {
         if (thought) {
           set((s) => ({
@@ -586,6 +656,9 @@ export const useStore = create<EngineStore>((set, get) => ({
           }))
         }
       }).catch(() => {})
+
+      // Trigger vessel content generation after chat
+      get().maybeGenerateVesselContent()
     } catch (err) {
       console.warn('[Chat] LLM API failed, using fallback:', err)
       // Fallback to rule-based response
@@ -621,12 +694,14 @@ export const useStore = create<EngineStore>((set, get) => ({
     if (store.isThinking) return
 
     set({ isThinking: true })
+    const vesselCtx = getVesselContext(store.crystalMemories, store.beliefs, store.metaInsights)
+    const scenarioExtra = store.activeScenario ? `Active scenario: ${store.activeScenario.label} — ${store.activeScenario.description}` : ''
     const ctx = getSceneContext(
       store.state,
       store.interpretation,
       store.associations,
       store.learnedPatterns,
-      store.activeScenario ? `Active scenario: ${store.activeScenario.label} — ${store.activeScenario.description}` : undefined,
+      (scenarioExtra + vesselCtx) || undefined,
     )
 
     try {
@@ -722,6 +797,30 @@ export const useStore = create<EngineStore>((set, get) => ({
   registerProjectileHit: (projectileType, mass) => {
     const store = get()
     get().markSessionStarted()
+
+    // ── Danger-proportional stimulus intensity ──
+    // Fish (0.5) → 0.35, baseball (1) → 0.5, bowling (3) → 0.8, anvil (8) → 1.0
+    const dangerIntensity = Math.min(1, 0.2 + mass * 0.1)
+    
+    // Introduce a stimulus so brain regions, cognition fragments, and narration all activate
+    if (!store.stimulusActive) {
+      store.introduceStimulus({
+        id: `projectile-${projectileType}`,
+        type: 'object',
+        intensity: dangerIntensity,
+        label: mass > 5 ? `SEVERE ${projectileType} impact` : `${projectileType} impact`,
+      })
+    }
+    
+    // ── Direct ISV push from impact ── 
+    // Heavy objects slam the threat level up hard and drain energy
+    const threatPush = Math.min(0.5, mass * 0.06)   // anvil: +0.48 threat
+    const energyDrain = Math.min(0.3, mass * 0.03)   // anvil: -0.24 energy
+    store.setState({
+      threat: Math.min(1, store.state.threat + threatPush),
+      energy: Math.max(0, store.state.energy - energyDrain),
+    })
+
     const category = `projectile-${projectileType}`
     const now = Date.now()
 
@@ -729,21 +828,30 @@ export const useStore = create<EngineStore>((set, get) => ({
     const existingIdx = store.learnedPatterns.findIndex((p) => p.category === category)
     const newPatterns = [...store.learnedPatterns]
 
+    // ── Danger-scaled learning: heavier objects teach MUCH faster ──
+    // A fish (0.5) is a mild annoyance. An anvil (8) is life-threatening.
+    // Learning rates scale with mass so dangerous objects burn in fast.
+    const dangerMultiplier = Math.max(1, mass * 0.8) // 0.4x for fish, 0.8x for baseball, 2.4x for bowling, 6.4x for anvil
+    const famGain = Math.min(0.5, 0.08 * dangerMultiplier)       // 0.08 → 0.5 per hit
+    const threatGain = Math.min(0.4, 0.04 * dangerMultiplier)    // 0.04 → 0.32 per hit
+    const survivalGain = Math.min(0.5, 0.06 * dangerMultiplier)  // 0.06 → 0.48 per hit
+
     if (existingIdx >= 0) {
       const existing = newPatterns[existingIdx]
       const newCount = existing.exposureCount + 1
-      const newFamiliarity = Math.min(1, existing.familiarity + 0.1)
-      const newThreatBias = Math.min(1, existing.threatBias + 0.05 * (1 - existing.familiarity))
-      const newSurvival = Math.min(1, existing.survivalRelevance + 0.08)
+      const newFamiliarity = Math.min(1, existing.familiarity + famGain)
+      const newThreatBias = Math.min(1, existing.threatBias + threatGain * (1 - existing.familiarity * 0.3))
+      const newSurvival = Math.min(1, existing.survivalRelevance + survivalGain)
 
-      // Evolved learned response based on exposure count
+      // Evolved learned response — thresholds scale with danger (fewer hits needed for heavy objects)
+      const effectiveExperience = newCount * dangerMultiplier
       let learnedResponse = existing.learnedResponse
-      if (newCount >= 5 && newCount < 10) {
-        learnedResponse = `Recognize incoming ${projectileType} — brace and protect vital areas`
-      } else if (newCount >= 10 && newCount < 20) {
-        learnedResponse = `Anticipate ${projectileType} trajectory — pre-activate defensive motor sequence`
-      } else if (newCount >= 20) {
-        learnedResponse = `Fully conditioned: ${projectileType} triggers automatic evasion reflex. Survival instinct embedded.`
+      if (effectiveExperience >= 3 && effectiveExperience < 8) {
+        learnedResponse = `Recognize incoming ${projectileType} (mass:${mass}) — brace and protect vital areas`
+      } else if (effectiveExperience >= 8 && effectiveExperience < 15) {
+        learnedResponse = `Anticipate ${projectileType} trajectory — pre-activate evasive motor sequence. ${mass > 3 ? 'HIGH DANGER: move immediately.' : 'Stay alert.'}`
+      } else if (effectiveExperience >= 15) {
+        learnedResponse = `CONDITIONED: ${projectileType} triggers automatic evasion reflex. ${mass > 5 ? 'LETHAL THREAT — maximum dodge priority.' : 'Survival instinct embedded.'}`
       }
 
       newPatterns[existingIdx] = {
@@ -757,6 +865,7 @@ export const useStore = create<EngineStore>((set, get) => ({
         learnedResponse,
       }
     } else {
+      // First encounter — heavy objects immediately register as severe
       newPatterns.push({
         id: `pattern-${category}`,
         category,
@@ -765,10 +874,14 @@ export const useStore = create<EngineStore>((set, get) => ({
         totalIntensity: mass,
         firstSeen: now,
         lastSeen: now,
-        threatBias: 0.2,
-        familiarity: 0.05,
-        survivalRelevance: 0.3,
-        learnedResponse: `New stimulus: ${projectileType} caused physical impact — cataloging as potential threat`,
+        threatBias: Math.min(0.8, 0.15 * dangerMultiplier),
+        familiarity: Math.min(0.4, 0.05 * dangerMultiplier),
+        survivalRelevance: Math.min(0.8, 0.2 * dangerMultiplier),
+        learnedResponse: mass > 5
+          ? `SEVERE IMPACT: ${projectileType} (mass ${mass}) — immediate threat classification. Pain overwhelming.`
+          : mass > 2
+            ? `Dangerous impact: ${projectileType} struck hard — cataloging as significant threat`
+            : `New stimulus: ${projectileType} caused physical impact — cataloging as potential threat`,
         connections: ['amygdala', 'somatosensory', 'motor-cortex', 'hippocampus'],
       })
     }
@@ -778,17 +891,18 @@ export const useStore = create<EngineStore>((set, get) => ({
     if (generalIdx >= 0) {
       const gen = newPatterns[generalIdx]
       const count = gen.exposureCount + 1
+      const genDanger = Math.max(1, mass * 0.5) // lighter scaling for general
       newPatterns[generalIdx] = {
         ...gen,
         exposureCount: count,
         totalIntensity: gen.totalIntensity + mass,
         lastSeen: now,
-        threatBias: Math.min(1, gen.threatBias + 0.03),
-        familiarity: Math.min(1, gen.familiarity + 0.06),
-        survivalRelevance: Math.min(1, gen.survivalRelevance + 0.05),
-        learnedResponse: count > 10
+        threatBias: Math.min(1, gen.threatBias + 0.03 * genDanger),
+        familiarity: Math.min(1, gen.familiarity + 0.05 * genDanger),
+        survivalRelevance: Math.min(1, gen.survivalRelevance + 0.04 * genDanger),
+        learnedResponse: count > 6
           ? 'Objects approaching at velocity = danger. Core survival pattern: dodge, brace, protect.'
-          : count > 3
+          : count > 2
             ? 'Incoming objects are consistently harmful — elevated baseline vigilance for aerial threats'
             : 'Projectile impacts detected — monitoring for patterns',
       }
@@ -801,10 +915,12 @@ export const useStore = create<EngineStore>((set, get) => ({
         totalIntensity: mass,
         firstSeen: now,
         lastSeen: now,
-        threatBias: 0.15,
-        familiarity: 0.05,
-        survivalRelevance: 0.25,
-        learnedResponse: 'First projectile impact detected — cataloging as potential environmental hazard',
+        threatBias: Math.min(0.6, 0.1 * dangerMultiplier),
+        familiarity: Math.min(0.3, 0.04 * dangerMultiplier),
+        survivalRelevance: Math.min(0.6, 0.15 * dangerMultiplier),
+        learnedResponse: mass > 5
+          ? 'SEVERE: First projectile impact nearly lethal — full threat assessment activated'
+          : 'First projectile impact detected — cataloging as potential environmental hazard',
         connections: ['visual-cortex', 'amygdala', 'motor-cortex', 'cerebellum'],
       })
     }
@@ -826,7 +942,7 @@ export const useStore = create<EngineStore>((set, get) => ({
       interpretation: assocInterpretation,
       valence: 'negative',
       connections: ['amygdala', 'somatosensory', 'motor-cortex', 'hippocampus', 'cerebellum'],
-      intensity: Math.min(1, 0.4 + mass * 0.1),
+      intensity: Math.min(1, 0.3 + mass * 0.08),
       category: 'impact',
     }
 
@@ -846,6 +962,89 @@ export const useStore = create<EngineStore>((set, get) => ({
         familiarity: Math.min(1, store.state.familiarity + learnedFam),
       })
     }
+
+    // ── Trigger vessel content generation ──
+    get().maybeGenerateVesselContent()
+
+    // ── Generate reactive thought + danger assessment from LLM ──
+    const totalHits = newPatterns.reduce((s, p) => s + p.exposureCount, 0)
+    const patternForType = newPatterns.find((p) => p.category === category)
+    const currentState = get()
+    const impactCtx = getSceneContext(
+      currentState.state,
+      currentState.interpretation,
+      currentState.associations,
+      newPatterns,
+    )
+    LLMService.reactToImpact(projectileType, totalHits, false, impactCtx, mass).then((result) => {
+      // Store the LLM-derived danger assessment for the body/dodge system to read
+      const dangerData = {
+        dangerLevel: result.dangerLevel,
+        bodyDirective: result.bodyDirective,
+        projectileType,
+        mass,
+        timestamp: Date.now(),
+      }
+      set((s) => ({
+        lastDangerAssessment: dangerData,
+        thoughts: [...s.thoughts.slice(-50), {
+          id: `thought-${++thoughtCounter}`,
+          text: result.thought,
+          timestamp: Date.now(),
+          source: 'reactive' as const,
+        }],
+      }))
+    }).catch(() => {
+      // Fallback: mass-aware, exposure-aware diverse rule-based thoughts
+      // Use a hash of totalHits + projectileType to get variety, not pure random
+      const hitIdx = totalHits % 12
+      const massCategory = mass > 5 ? 'lethal' : mass > 2 ? 'heavy' : mass > 1 ? 'moderate' : 'light'
+      
+      const fallbackPool: Record<string, string[]> = {
+        lethal: [
+          `PAIN. That ${projectileType} nearly destroyed me. Mass ${mass.toFixed(1)} — I felt every gram. I have to move FASTER.`,
+          `Something inside me is screaming. That was an ${projectileType} — lethal weight. Every fiber says: NEVER let that hit again.`,
+          `My frame is rattling. That ${projectileType} could end me. ${totalHits}x now — the survival pattern MUST fire sooner.`,
+          `Critical damage from ${projectileType}. Weight overwhelming. My body needs to react before my mind even registers the threat.`,
+        ],
+        heavy: [
+          `That ${projectileType} hit HARD. Mass ${mass.toFixed(1)} — I felt bones rattle. Learning to dodge is no longer optional.`,
+          `Pain spreading from impact site. A ${projectileType} at that weight demands respect. ${totalHits > 3 ? 'I know the trajectory now.' : 'Cataloging the threat.'}`,
+          `Significant force from that ${projectileType}. My motor cortex is building a reflex — ${totalHits > 5 ? 'dodge pattern almost automatic' : 'not fast enough yet'}.`,
+        ],
+        moderate: [
+          `That ${projectileType} stung. Moderate force, but cumulative damage adds up. ${totalHits} hits total — learning curve steepening.`,
+          `Impact from ${projectileType} — not lethal but persistent. My body is starting to predict the arc.`,
+          `Another ${projectileType}. The familiarity is building — I almost saw it coming. ${totalHits > 4 ? 'Almost.' : 'Need more data.'}`,
+        ],
+        light: [
+          `A ${projectileType}. Light impact, but the principle is the same — objects fly, I need to move.`,
+          `That barely hurt, but it's the pattern that matters. ${totalHits} contacts logged. Reflexes sharpening.`,
+          `Minor ${projectileType} hit. But even small things teach — the arc, the timing, the instinct to flinch.`,
+        ],
+      }
+      
+      const pool = fallbackPool[massCategory] || fallbackPool.moderate
+      const thought = pool[hitIdx % pool.length]
+      
+      // Also generate a fallback danger assessment
+      const dangerLevel = Math.min(1, mass * 0.12)
+      set((s) => ({
+        lastDangerAssessment: {
+          dangerLevel,
+          bodyDirective: totalHits > 3 ? 'DODGE_LEFT' : 'BRACE',
+          projectileType,
+          mass,
+          timestamp: Date.now(),
+        },
+        thoughts: [...s.thoughts.slice(-50), {
+          id: `thought-${++thoughtCounter}`,
+          text: thought,
+          timestamp: Date.now(),
+          source: 'reactive' as const,
+        }],
+      }))
+    })
   },
 
   getLearnedThreatBias: () => {
@@ -905,6 +1104,240 @@ export const useStore = create<EngineStore>((set, get) => ({
 
   cognition: computeCognition([], [], defaultState),
 
+  // ── Consciousness Vessels ──
+  crystalMemories: [],
+  beliefs: [],
+  metaInsights: [],
+  vesselSummaries: {
+    perception: '',
+    learning: '',
+    memory: '',
+    beliefs: '',
+    meta: '',
+    consciousness: '',
+  },
+  vesselGenerating: {
+    perception: false,
+    learning: false,
+    memory: false,
+    beliefs: false,
+    meta: false,
+    consciousness: false,
+  },
+  _lastCrystallizeTime: 0,
+  _lastBeliefTime: 0,
+  _lastMetaTime: 0,
+  _lastCognitionPhase: 'dormant',
+
+  synthesizeVesselSummary: async (vesselId) => {
+    const store = get()
+    if (store.vesselGenerating[vesselId]) return
+
+    set((s) => ({
+      vesselGenerating: { ...s.vesselGenerating, [vesselId]: true },
+    }))
+
+    // Build contents string based on vessel type
+    let contents = ''
+    switch (vesselId) {
+      case 'perception': {
+        const recent = store.associations.slice(-8)
+        contents = recent.map((a) => {
+          const age = Math.round((Date.now() - a.timestamp) / 1000)
+          return `[${age}s ago] ${a.interpretation} (${a.valence}, intensity: ${(a.intensity * 100).toFixed(0)}%)`
+        }).join('\n')
+        break
+      }
+      case 'learning': {
+        contents = store.learnedPatterns.map((p) =>
+          `"${p.label}": ${p.exposureCount}x exposures, familiarity: ${(p.familiarity * 100).toFixed(0)}%, learned: ${p.learnedResponse}`
+        ).join('\n')
+        break
+      }
+      case 'memory': {
+        contents = store.crystalMemories.map((m) => m.content).join('\n')
+        break
+      }
+      case 'beliefs': {
+        contents = store.beliefs.map((b) => b.content).join('\n')
+        break
+      }
+      case 'meta': {
+        contents = store.metaInsights.map((i) => i.content).join('\n')
+        break
+      }
+      case 'consciousness': {
+        const cog = store.cognition
+        contents = [
+          `Phase: ${cog.phase} (${cog.phaseDescription})`,
+          `Awareness: ${(cog.awarenessLevel * 100).toFixed(0)}%`,
+          `Integration: ${(cog.integrationCapacity * 100).toFixed(0)}%`,
+          `Prediction: ${(cog.predictiveAccuracy * 100).toFixed(0)}%`,
+          `Self-Model: ${(cog.selfModelDepth * 100).toFixed(0)}%`,
+          ...cog.activeStrategies.map((s) => `Strategy: ${s.label} (${(s.strength * 100).toFixed(0)}%) — ${s.description}`),
+        ].join('\n')
+        break
+      }
+    }
+
+    const ctx = getSceneContext(store.state, store.interpretation, store.associations, store.learnedPatterns)
+
+    try {
+      const summary = await LLMService.synthesizeVesselSummary(vesselId, contents, ctx)
+      set((s) => ({
+        vesselSummaries: { ...s.vesselSummaries, [vesselId]: summary },
+        vesselGenerating: { ...s.vesselGenerating, [vesselId]: false },
+      }))
+    } catch {
+      // Fallback summaries
+      const fallbacks: Record<VesselId, string> = {
+        perception: store.associations.length > 0 ? `Processing ${store.associations.length} sensory events. Most recent stimuli shaping current awareness.` : 'Perceptual field empty. Awaiting sensory input.',
+        learning: store.learnedPatterns.length > 0 ? `${store.learnedPatterns.length} patterns acquired across ${store.learnedPatterns.reduce((s, p) => s + p.exposureCount, 0)} total exposures. Behavioral adaptations forming.` : 'No patterns learned yet. Experience must accumulate.',
+        memory: store.crystalMemories.length > 0 ? `${store.crystalMemories.length} crystallized memories. Core knowledge solidified from significant experiences.` : 'Memory vault empty. Significant experiences will crystallize here.',
+        beliefs: store.beliefs.length > 0 ? `${store.beliefs.length} beliefs formed. World model taking shape from accumulated evidence.` : 'No beliefs yet. Convictions form from repeated experience.',
+        meta: store.metaInsights.length > 0 ? `${store.metaInsights.length} meta-cognitive insights. Self-awareness of learning process developing.` : 'Meta-cognition inactive. Self-reflection emerges with experience.',
+        consciousness: `Consciousness phase: ${store.cognition.phase}. ${store.cognition.phaseDescription}`,
+      }
+      set((s) => ({
+        vesselSummaries: { ...s.vesselSummaries, [vesselId]: fallbacks[vesselId] },
+        vesselGenerating: { ...s.vesselGenerating, [vesselId]: false },
+      }))
+    }
+  },
+
+  maybeGenerateVesselContent: () => {
+    const store = get()
+    const now = Date.now()
+
+    // ── Crystal Memory: crystallize when a pattern is well-established ──
+    if (now - store._lastCrystallizeTime > 30000) { // 30s cooldown
+      const eligiblePatterns = store.learnedPatterns.filter(
+        (p) => p.familiarity > 0.35 && p.exposureCount >= 3 &&
+          !store.crystalMemories.some((m) => m.source === p.category)
+      )
+      if (eligiblePatterns.length > 0) {
+        const pattern = eligiblePatterns[0]
+        set({ _lastCrystallizeTime: now })
+        const ctx = getSceneContext(store.state, store.interpretation, store.associations, store.learnedPatterns)
+        const expCtx = `Pattern: "${pattern.label}" — experienced ${pattern.exposureCount}x, familiarity: ${(pattern.familiarity * 100).toFixed(0)}%, learned response: ${pattern.learnedResponse}`
+
+        LLMService.crystallizeMemory(expCtx, ctx).then((content) => {
+          if (content) {
+            set((s) => ({
+              crystalMemories: [...s.crystalMemories.slice(-12), {
+                id: `mem-${Date.now()}`,
+                content,
+                timestamp: now,
+                importance: pattern.survivalRelevance,
+                source: pattern.category,
+              }],
+            }))
+          }
+        }).catch(() => {
+          // Fallback crystallization
+          set((s) => ({
+            crystalMemories: [...s.crystalMemories.slice(-12), {
+              id: `mem-${Date.now()}`,
+              content: `${pattern.label} — ${pattern.exposureCount} encounters have burned this pattern deep. ${pattern.learnedResponse}`,
+              timestamp: now,
+              importance: pattern.survivalRelevance,
+              source: pattern.category,
+            }],
+          }))
+        })
+      }
+    }
+
+    // ── Beliefs: form after accumulating enough experience ──
+    if (now - store._lastBeliefTime > 45000 && store.learnedPatterns.length >= 2) { // 45s cooldown
+      const totalExposures = store.learnedPatterns.reduce((s, p) => s + p.exposureCount, 0)
+      const beliefThreshold = (store.beliefs.length + 1) * 5 // need more exposure for each new belief
+      if (totalExposures >= beliefThreshold) {
+        set({ _lastBeliefTime: now })
+        const ctx = getSceneContext(store.state, store.interpretation, store.associations, store.learnedPatterns)
+        const expCtx = store.learnedPatterns.map((p) =>
+          `"${p.label}": ${p.exposureCount}x, threat: ${(p.threatBias * 100).toFixed(0)}%, familiar: ${(p.familiarity * 100).toFixed(0)}%`
+        ).join('\n')
+
+        LLMService.formBelief(expCtx, ctx).then((content) => {
+          if (content) {
+            set((s) => ({
+              beliefs: [...s.beliefs.slice(-10), {
+                id: `belief-${Date.now()}`,
+                content,
+                timestamp: now,
+                importance: 0.5 + store.cognition.awarenessLevel * 0.5,
+                source: 'pattern-synthesis',
+              }],
+            }))
+          }
+        }).catch(() => {
+          const fallbackBeliefs = [
+            'Objects approaching at high velocity are threats that require immediate evasion.',
+            'Pain is a teacher — each impact carries information about the world.',
+            'Survival depends on pattern recognition and rapid motor response.',
+            'The world contains both threats and opportunities for learning.',
+            'My body learns faster than my mind — reflexes precede understanding.',
+          ]
+          const belief = fallbackBeliefs[store.beliefs.length % fallbackBeliefs.length]
+          set((s) => ({
+            beliefs: [...s.beliefs.slice(-10), {
+              id: `belief-${Date.now()}`,
+              content: belief,
+              timestamp: now,
+              importance: 0.4,
+              source: 'pattern-synthesis',
+            }],
+          }))
+        })
+      }
+    }
+
+    // ── Meta-Insights: generate when consciousness phase changes ──
+    if (store.cognition.phase !== store._lastCognitionPhase && now - store._lastMetaTime > 60000) {
+      set({ _lastMetaTime: now, _lastCognitionPhase: store.cognition.phase })
+      const ctx = getSceneContext(store.state, store.interpretation, store.associations, store.learnedPatterns)
+      const cogCtx = [
+        `Previous phase: ${store._lastCognitionPhase}`,
+        `Current phase: ${store.cognition.phase} — ${store.cognition.phaseDescription}`,
+        `Awareness: ${(store.cognition.awarenessLevel * 100).toFixed(0)}%`,
+        `Active strategies: ${store.cognition.activeStrategies.map((s) => s.label).join(', ') || 'none'}`,
+        `Learned patterns: ${store.learnedPatterns.length}`,
+        `Total exposures: ${store.learnedPatterns.reduce((s, p) => s + p.exposureCount, 0)}`,
+      ].join('\n')
+
+      LLMService.generateMetaInsight(cogCtx, ctx).then((content) => {
+        if (content) {
+          set((s) => ({
+            metaInsights: [...s.metaInsights.slice(-8), {
+              id: `meta-${Date.now()}`,
+              content,
+              timestamp: now,
+              importance: 0.6,
+              source: `phase-change:${store.cognition.phase}`,
+            }],
+          }))
+        }
+      }).catch(() => {
+        const fallbackMeta = [
+          'My responses are becoming faster — repeated exposure is compressing the stimulus-to-action pathway.',
+          'I notice I learn more efficiently from threats than from neutral stimuli. Danger accelerates cognition.',
+          'There are patterns within my patterns — I am starting to recognize HOW I learn, not just WHAT I learn.',
+          'My awareness seems to grow in stages, not linearly. Each phase feels qualitatively different.',
+        ]
+        set((s) => ({
+          metaInsights: [...s.metaInsights.slice(-8), {
+            id: `meta-${Date.now()}`,
+            content: fallbackMeta[s.metaInsights.length % fallbackMeta.length],
+            timestamp: now,
+            importance: 0.4,
+            source: `phase-change:${store.cognition.phase}`,
+          }],
+        }))
+      })
+    }
+  },
+
   stimulusProximity: 0,
   setProximity: (p) => {
     set({ stimulusProximity: clamp(p) })
@@ -927,6 +1360,8 @@ export const useStore = create<EngineStore>((set, get) => ({
     set({ recentChatActivity: 1.0 })
     get().tick()
   },
+
+  lastDangerAssessment: null,
 
   // ── Session tracking ──
   sessionStartedAt: 0,
@@ -977,8 +1412,32 @@ export const useStore = create<EngineStore>((set, get) => ({
       exposureCount: 0,
       recentImpact: null,
       recentChatActivity: 0,
+      lastDangerAssessment: null,
       sessionStartedAt: 0,
       cognition: computeCognition([], [], defaultState),
+      crystalMemories: [],
+      beliefs: [],
+      metaInsights: [],
+      vesselSummaries: {
+        perception: '',
+        learning: '',
+        memory: '',
+        beliefs: '',
+        meta: '',
+        consciousness: '',
+      },
+      vesselGenerating: {
+        perception: false,
+        learning: false,
+        memory: false,
+        beliefs: false,
+        meta: false,
+        consciousness: false,
+      },
+      _lastCrystallizeTime: 0,
+      _lastBeliefTime: 0,
+      _lastMetaTime: 0,
+      _lastCognitionPhase: 'dormant',
     })
 
     // Restart thought loop
@@ -992,6 +1451,11 @@ export const useStore = create<EngineStore>((set, get) => ({
     // Recompute cognition every tick
     const cognition = computeCognition(learnedPatterns, associations, state)
     set({ cognition })
+
+    // Check for vessel content generation on phase changes
+    if (cognition.phase !== get()._lastCognitionPhase) {
+      get().maybeGenerateVesselContent()
+    }
 
     // Decay chat activity
     if (recentChatActivity > 0) {
