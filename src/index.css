@@ -13,6 +13,7 @@ html, body, #root {
   background: #060610;
   color: white;
   font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', 'Cascadia Code', monospace;
+  font-size: 14px;
 }
 
 /* Custom scrollbar */
@@ -39,4 +40,35 @@ input[type="range"]::-webkit-slider-thumb:hover {
 @keyframes pulse-glow {
   0%, 100% { opacity: 0.6; }
   50% { opacity: 1; }
+}
+
+/* Yeet launcher animations */
+@keyframes hit-float {
+  0% { opacity: 1; transform: translateY(0) scale(1); }
+  100% { opacity: 0; transform: translateY(-80px) scale(1.5); }
+}
+
+@keyframes combo-pulse {
+  0% { transform: translate(-50%,-50%) scale(0.5); }
+  50% { transform: translate(-50%,-50%) scale(1.2); }
+  100% { transform: translate(-50%,-50%) scale(1); }
+}
+
+@keyframes btn-shine {
+  0%, 75%, 100% { left: -60%; }
+  85% { left: 120%; }
+}
+
+.animate-hit-float { animation: hit-float 1.2s forwards; }
+.animate-combo-pulse { animation: combo-pulse 0.4s; }
+.animate-btn-shine { animation: btn-shine 3s infinite; }
+
+/* Thought entry fade-in */
+@keyframes thought-fade-in {
+  0% { opacity: 0; transform: translateY(6px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+.thought-entry {
+  animation: thought-fade-in 0.5s ease-out;
 }

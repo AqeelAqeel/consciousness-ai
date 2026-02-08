@@ -1,0 +1,168 @@
+import { create } from 'zustand'
+
+export type ProjectileType = 'baseball' | 'bowling' | 'watermelon' | 'anvil' | 'fish' | 'random'
+
+export interface ProjectileData {
+  id: string
+  type: Exclude<ProjectileType, 'random'>
+  position: [number, number, number]
+  velocity: [number, number, number]
+  spin: number
+  gravity: number
+  mass: number
+  radius: number
+  scale: number
+}
+
+const PROJECTILE_CONFIGS: Record<Exclude<ProjectileType, 'random'>, { mass: number; radius: number; scale: number }> = {
+  baseball:    { mass: 1,   radius: 0.06, scale: 0.35 },
+  bowling:     { mass: 3,   radius: 0.12, scale: 0.28 },
+  watermelon:  { mass: 4,   radius: 0.14, scale: 0.28 },
+  anvil:       { mass: 8,   radius: 0.16, scale: 0.25 },
+  fish:        { mass: 0.5, radius: 0.08, scale: 0.3  },
+}
+
+const TYPES: Exclude<ProjectileType, 'random'>[] = ['baseball', 'bowling', 'watermelon', 'anvil', 'fish']
+
+let idCounter = 0
+
+interface YeetStore {
+  // Stats
+  hits: number
+  thrown: number
+  combo: number
+  lastHitTime: number
+  lastVelocity: number
+
+  // Selected type
+  selectedType: ProjectileType
+  setSelectedType: (type: ProjectileType) => void
+
+  // Params
+  power: number
+  angle: number
+  gravity: number
+  spin: number
+  chaosEnabled: boolean
+  chaosAmount: number
+
+  setPower: (v: number) => void
+  setAngle: (v: number) => void
+  setGravity: (v: number) => void
+  setSpin: (v: number) => void
+  setChaosEnabled: (v: boolean) => void
+  setChaosAmount: (v: number) => void
+
+  // Projectiles
+  projectiles: ProjectileData[]
+  launch: () => void
+  removeProjectile: (id: string) => void
+  registerHit: () => void
+
+  // Character reaction
+  impactDirection: [number, number, number] | null
+  clearImpact: () => void
+}
+
+export const useYeetStore = create<YeetStore>((set, get) => ({
+  hits: 0,
+  thrown: 0,
+  combo: 0,
+  lastHitTime: 0,
+  lastVelocity: 0,
+
+  selectedType: 'baseball',
+  setSelectedType: (type) => set({ selectedType: type }),
+
+  power: 50,
+  angle: 35,
+  gravity: 9.8,
+  spin: 0,
+  chaosEnabled: false,
+  chaosAmount: 0,
+
+  setPower: (v) => set({ power: v }),
+  setAngle: (v) => set({ angle: v }),
+  setGravity: (v) => set({ gravity: v }),
+  setSpin: (v) => set({ spin: v }),
+  setChaosEnabled: (v) => set({ chaosEnabled: v }),
+  setChaosAmount: (v) => set({ chaosAmount: v }),
+
+  projectiles: [],
+
+  launch: () => {
+    const { power, angle, gravity, spin, chaosEnabled, chaosAmount, selectedType } = get()
+
+    let type = selectedType
+    if (type === 'random') {
+      type = TYPES[Math.floor(Math.random() * TYPES.length)]
+    }
+    const config = PROJECTILE_CONFIGS[type]
+
+    let launchAngle = angle * (Math.PI / 180)
+    let launchPower = power * 0.06 // scaled for small scene
+    let spreadX = 0
+    let spreadZ = 0
+
+    if (chaosEnabled) {
+      const c = chaosAmount / 100
+      launchAngle += (Math.random() - 0.5) * c * 0.6
+      launchPower += (Math.random() - 0.5) * c * launchPower * 0.4
+      spreadX = (Math.random() - 0.5) * c * 1.0
+      spreadZ = (Math.random() - 0.5) * c * 0.8
+    }
+
+    // Launch from behind-right of camera (camera is at [0, 2.0, 4.5])
+    const startPos: [number, number, number] = [-2.5 + spreadX, 0.8, 5.0 + spreadZ]
+
+    // Direction toward Agent at origin (y=1.5 center, agent scaled 1.5x)
+    const targetY = 1.5
+    const dx = -startPos[0]
+    const dz = -startPos[2]
+    const len = Math.sqrt(dx * dx + dz * dz)
+    const dirX = dx / len
+    const dirZ = dz / len
+
+    const vx = dirX * launchPower * Math.cos(launchAngle)
+    const vy = launchPower * Math.sin(launchAngle) + (targetY - startPos[1]) * 0.3
+    const vz = dirZ * launchPower * Math.cos(launchAngle)
+
+    const projectile: ProjectileData = {
+      id: `proj-${++idCounter}`,
+      type,
+      position: startPos,
+      velocity: [vx, vy, vz],
+      spin,
+      gravity,
+      mass: config.mass,
+      radius: config.radius,
+      scale: config.scale,
+    }
+
+    set((s) => ({
+      projectiles: [...s.projectiles, projectile],
+      thrown: s.thrown + 1,
+      lastVelocity: Math.round(launchPower * 100) / 10,
+    }))
+  },
+
+  removeProjectile: (id) => {
+    set((s) => ({
+      projectiles: s.projectiles.filter((p) => p.id !== id),
+    }))
+  },
+
+  registerHit: () => {
+    const now = Date.now()
+    const { lastHitTime, combo } = get()
+    const newCombo = now - lastHitTime < 2000 ? combo + 1 : 1
+    set({
+      hits: get().hits + 1,
+      combo: newCombo,
+      lastHitTime: now,
+    })
+  },
+
+  impactDirection: null,
+  clearImpact: () => set({ impactDirection: null }),
+}))

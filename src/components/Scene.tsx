@@ -2,20 +2,22 @@ import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { EffectComposer, Bloom, Vignette, ChromaticAberration } from '@react-three/postprocessing'
 import { BlendFunction } from 'postprocessing'
-import { Agent } from './Agent'
-import { BrainOverlay } from './BrainOverlay'
+import { MechanicalAgent } from './MechanicalAgent'
+import { Terrain } from './Terrain'
 import { StimulusObject } from './StimulusObject'
-import { Environment } from './Environment'
 import { CognitiveField } from './CognitiveField'
 import { DragPlane } from './DragPlane'
+import { Projectile } from './yeet/Projectile'
+import { DebrisSystem } from './yeet/Debris'
 import { useStore } from '../store/useStore'
+import { useYeetStore } from '../store/useYeetStore'
 
 function PostEffects() {
   const interpretation = useStore((s) => s.interpretation)
   const threat = interpretation?.perceivedThreat ?? 0
 
   return (
-    <EffectComposer>
+    <EffectComposer multisampling={0}>
       <Bloom
         luminanceThreshold={0.3}
         luminanceSmoothing={0.9}
@@ -40,7 +42,7 @@ function PostEffects() {
 export function Scene() {
   return (
     <Canvas
-      camera={{ position: [0, 1.5, 3.5], fov: 50 }}
+      camera={{ position: [0, 2.0, 4.5], fov: 45 }}
       gl={{
         antialias: true,
         alpha: false,
@@ -49,26 +51,38 @@ export function Scene() {
       dpr={[1, 2]}
       style={{ background: '#060610' }}
     >
-      <Environment />
-      <Agent />
-      <BrainOverlay />
+      <Terrain />
+      <MechanicalAgent />
       <StimulusObject />
       <CognitiveField />
       <DragPlane />
+      <ProjectileManager />
+      <DebrisSystem />
       <PostEffects />
 
       <OrbitControls
         enablePan={false}
         enableZoom={true}
         minDistance={2}
-        maxDistance={7}
-        minPolarAngle={Math.PI * 0.2}
+        maxDistance={10}
+        minPolarAngle={Math.PI * 0.15}
         maxPolarAngle={Math.PI * 0.7}
-        target={[0, 1.2, 0]}
+        target={[0, 1.5, 0]}
         autoRotate={false}
         enableDamping
         dampingFactor={0.05}
       />
     </Canvas>
+  )
+}
+
+function ProjectileManager() {
+  const projectiles = useYeetStore((s) => s.projectiles)
+  return (
+    <>
+      {projectiles.map((p) => (
+        <Projectile key={p.id} data={p} />
+      ))}
+    </>
   )
 }
