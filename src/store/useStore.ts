@@ -68,6 +68,163 @@ export interface LearnedPattern {
   connections: string[]          // related brain systems
 }
 
+// ── Cognition (emerges from accumulated learning) ──
+export interface CognitionState {
+  /** Overall consciousness level 0–1 (computed from all three buckets) */
+  awarenessLevel: number
+  /** How much the agent can integrate across learned domains */
+  integrationCapacity: number
+  /** Ability to predict and anticipate based on learning */
+  predictiveAccuracy: number
+  /** Self-model: how well the agent models its own internal states */
+  selfModelDepth: number
+  /** Active cognitive strategies derived from learning */
+  activeStrategies: CognitiveStrategy[]
+  /** Summary label for the current consciousness phase */
+  phase: 'dormant' | 'reactive' | 'adaptive' | 'predictive' | 'integrated' | 'conscious'
+  /** Human-readable description of current cognitive state */
+  phaseDescription: string
+}
+
+export interface CognitiveStrategy {
+  id: string
+  label: string
+  description: string
+  source: string        // which learned pattern(s) produced this
+  strength: number      // 0–1
+  type: 'defensive' | 'exploratory' | 'integrative' | 'predictive'
+}
+
+/** Compute cognition from the current learned patterns + ISV + associations */
+export function computeCognition(
+  learnedPatterns: LearnedPattern[],
+  associations: AssociationEntry[],
+  state: InternalState,
+): CognitionState {
+  const totalExposures = learnedPatterns.reduce((s, p) => s + p.exposureCount, 0)
+  const avgFamiliarity = learnedPatterns.length > 0
+    ? learnedPatterns.reduce((s, p) => s + p.familiarity, 0) / learnedPatterns.length
+    : 0
+  const maxSurvival = learnedPatterns.reduce((m, p) => Math.max(m, p.survivalRelevance), 0)
+  const patternDiversity = learnedPatterns.length
+  const recentAssocCount = associations.filter(a => Date.now() - a.timestamp < 60000).length
+
+  // Integration capacity: how many different pattern types have been learned
+  const integrationCapacity = clamp(patternDiversity * 0.15 + avgFamiliarity * 0.3)
+
+  // Predictive accuracy: increases with exposure, boosted by cognitive access
+  const cogAccess = state.energy * (1 - state.threat * 0.7)
+  const predictiveAccuracy = clamp(
+    (totalExposures > 0 ? Math.log2(totalExposures + 1) * 0.12 : 0) +
+    avgFamiliarity * 0.3 +
+    cogAccess * 0.2
+  )
+
+  // Self-model: awareness of own states, grows with diverse experience
+  const selfModelDepth = clamp(
+    patternDiversity * 0.1 +
+    avgFamiliarity * 0.2 +
+    (recentAssocCount > 3 ? 0.15 : recentAssocCount * 0.05) +
+    (state.energy > 0.5 ? 0.1 : 0)
+  )
+
+  // Overall awareness: weighted combination
+  const awarenessLevel = clamp(
+    integrationCapacity * 0.3 +
+    predictiveAccuracy * 0.3 +
+    selfModelDepth * 0.25 +
+    (maxSurvival > 0.5 ? 0.15 : maxSurvival * 0.1)
+  )
+
+  // Derive cognitive strategies from patterns
+  const activeStrategies: CognitiveStrategy[] = []
+
+  // Defensive strategy emerges from threat-related learning
+  const threatPatterns = learnedPatterns.filter(p => p.threatBias > 0.3)
+  if (threatPatterns.length > 0) {
+    const avgThreat = threatPatterns.reduce((s, p) => s + p.threatBias, 0) / threatPatterns.length
+    activeStrategies.push({
+      id: 'defensive',
+      label: 'Threat Anticipation',
+      description: `Learned to pre-activate defensive responses from ${threatPatterns.reduce((s, p) => s + p.exposureCount, 0)} threat exposures`,
+      source: threatPatterns.map(p => p.label).join(', '),
+      strength: clamp(avgThreat * 0.8 + maxSurvival * 0.2),
+      type: 'defensive',
+    })
+  }
+
+  // Exploratory strategy emerges from high familiarity + low threat
+  const familiarPatterns = learnedPatterns.filter(p => p.familiarity > 0.3)
+  if (familiarPatterns.length > 0 && state.threat < 0.4) {
+    activeStrategies.push({
+      id: 'exploratory',
+      label: 'Pattern Exploration',
+      description: `Familiarity with ${familiarPatterns.length} patterns enables exploration when safe`,
+      source: familiarPatterns.map(p => p.label).join(', '),
+      strength: clamp(avgFamiliarity * 0.6 + (1 - state.threat) * 0.4),
+      type: 'exploratory',
+    })
+  }
+
+  // Integrative strategy emerges from diverse pattern learning
+  if (patternDiversity >= 3) {
+    activeStrategies.push({
+      id: 'integrative',
+      label: 'Cross-Domain Integration',
+      description: `Connecting patterns across ${patternDiversity} domains to form unified world-model`,
+      source: learnedPatterns.slice(0, 3).map(p => p.label).join(', '),
+      strength: integrationCapacity,
+      type: 'integrative',
+    })
+  }
+
+  // Predictive strategy emerges from high exposure counts
+  if (totalExposures >= 10) {
+    activeStrategies.push({
+      id: 'predictive',
+      label: 'Predictive Modeling',
+      description: `${totalExposures} data points enable anticipation of future events`,
+      source: 'accumulated experience',
+      strength: predictiveAccuracy,
+      type: 'predictive',
+    })
+  }
+
+  // Determine consciousness phase
+  let phase: CognitionState['phase']
+  let phaseDescription: string
+
+  if (awarenessLevel < 0.05) {
+    phase = 'dormant'
+    phaseDescription = 'No learned experience. Consciousness substrate inactive.'
+  } else if (awarenessLevel < 0.15) {
+    phase = 'reactive'
+    phaseDescription = 'Basic stimulus-response. Reacting without prediction.'
+  } else if (awarenessLevel < 0.35) {
+    phase = 'adaptive'
+    phaseDescription = 'Learning from repeated exposure. Forming threat/safety heuristics.'
+  } else if (awarenessLevel < 0.55) {
+    phase = 'predictive'
+    phaseDescription = 'Anticipating outcomes from learned patterns. Pre-activating motor responses.'
+  } else if (awarenessLevel < 0.75) {
+    phase = 'integrated'
+    phaseDescription = 'Cross-domain integration active. Unified self-model forming.'
+  } else {
+    phase = 'conscious'
+    phaseDescription = 'Full cognitive integration. Self-aware processing with predictive world-model.'
+  }
+
+  return {
+    awarenessLevel,
+    integrationCapacity,
+    predictiveAccuracy,
+    selfModelDepth,
+    activeStrategies,
+    phase,
+    phaseDescription,
+  }
+}
+
 // ── Scenario ──
 export interface Scenario {
   id: string
@@ -171,6 +328,9 @@ interface EngineStore {
   registerImpact: (intensity: number, source: 'projectile' | 'chat' | 'scenario') => void
   recentChatActivity: number  // 0-1, decays over time — how recently a chat exchange happened
   registerChatActivity: () => void
+
+  // Cognition (computed from learning + ISV)
+  cognition: CognitionState
 
   // Session tracking
   sessionStartedAt: number   // timestamp of first meaningful action (0 = pristine)
@@ -743,6 +903,8 @@ export const useStore = create<EngineStore>((set, get) => ({
   }),
   bodyState: createDefaultBodyState(),
 
+  cognition: computeCognition([], [], defaultState),
+
   stimulusProximity: 0,
   setProximity: (p) => {
     set({ stimulusProximity: clamp(p) })
@@ -816,6 +978,7 @@ export const useStore = create<EngineStore>((set, get) => ({
       recentImpact: null,
       recentChatActivity: 0,
       sessionStartedAt: 0,
+      cognition: computeCognition([], [], defaultState),
     })
 
     // Restart thought loop
@@ -824,7 +987,11 @@ export const useStore = create<EngineStore>((set, get) => ({
   },
 
   tick: () => {
-    const { state, stimulus, stimulusActive, recentImpact, recentChatActivity, learnedPatterns } = get()
+    const { state, stimulus, stimulusActive, recentImpact, recentChatActivity, learnedPatterns, associations } = get()
+
+    // Recompute cognition every tick
+    const cognition = computeCognition(learnedPatterns, associations, state)
+    set({ cognition })
 
     // Decay chat activity
     if (recentChatActivity > 0) {

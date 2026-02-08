@@ -2,6 +2,7 @@ import { useRef, useMemo } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useStore } from '../store/useStore'
+import { useYeetStore } from '../store/useYeetStore'
 import { BodyPartId, PartState } from '../engine/bodyTypes'
 
 // ── Geometry constants ──
@@ -59,7 +60,20 @@ function makeGlowMaterial() {
 
 // ── Component ──
 
+// Agent center matches what Projectile.tsx uses for collision
+const AGENT_CENTER_Y = 1.5
+
 export function MechanicalAgent() {
+  // Root group ref for whole-body translation (dodge + recoil)
+  const rootRef = useRef<THREE.Group>(null)
+
+  // Dodge/evasion state
+  const dodgeOffset = useRef(new THREE.Vector3(0, 0, 0))
+  const dodgeTarget = useRef(new THREE.Vector3(0, 0, 0))
+  const recoilVel = useRef(new THREE.Vector3(0, 0, 0))
+  const lastDodgeTime = useRef(0)
+  const isRecovering = useRef(false)
+
   // Refs for each group in the hierarchy
   const refs = useRef<Record<string, THREE.Group | null>>({})
   // Materials for each part

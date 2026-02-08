@@ -115,19 +115,21 @@ export const useYeetStore = create<YeetStore>((set, get) => ({
       spreadZ = (Math.random() - 0.5) * c * 0.8
     }
 
-    // Launch from behind-right of camera (camera is at [0, 2.0, 4.5])
-    const startPos: [number, number, number] = [-2.5 + spreadX, 0.8, 5.0 + spreadZ]
+    // Launch from the left side of the scene so the arc is visible
+    // Camera is at [0, 2.0, 4.5] looking at [0, 1.5, 0]
+    const startPos: [number, number, number] = [-3.5 + spreadX, 1.0 + spreadZ * 0.3, 2.0]
 
     // Direction toward Agent at origin (y=1.5 center, agent scaled 1.5x)
     const targetY = 1.5
-    const dx = -startPos[0]
-    const dz = -startPos[2]
+    const dx = 0 - startPos[0]
+    const dy = targetY - startPos[1]
+    const dz = 0 - startPos[2]
     const len = Math.sqrt(dx * dx + dz * dz)
     const dirX = dx / len
     const dirZ = dz / len
 
     const vx = dirX * launchPower * Math.cos(launchAngle)
-    const vy = launchPower * Math.sin(launchAngle) + (targetY - startPos[1]) * 0.3
+    const vy = launchPower * Math.sin(launchAngle) + dy * 0.35
     const vz = dirZ * launchPower * Math.cos(launchAngle)
 
     const projectile: ProjectileData = {

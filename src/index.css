@@ -98,3 +98,13 @@ input[type="range"]::-webkit-slider-thumb:hover {
   0% { opacity: 0; transform: translateX(-8px); }
   100% { opacity: 1; transform: translateX(0); }
 }
+
+/* Drawer slide-down */
+.sim-drawer-enter {
+  animation: sim-drawer-open 0.2s ease-out;
+}
+
+@keyframes sim-drawer-open {
+  0% { max-height: 0; opacity: 0; }
+  100% { max-height: 120px; opacity: 1; }
+}

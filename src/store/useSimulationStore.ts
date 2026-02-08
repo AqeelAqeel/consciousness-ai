@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { useStore } from './useStore'
+import { useStore, SCENARIOS } from './useStore'
 import { useYeetStore } from './useYeetStore'
 import type { ProjectileType } from './useYeetStore'
 
@@ -209,8 +209,6 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
 
     // Mark session started
     useStore.getState().markSessionStarted()
-
-    const { SCENARIOS } = await import('./useStore')
 
     set({
       activeSim: sim,

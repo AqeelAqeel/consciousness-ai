@@ -1,8 +1,8 @@
 // ── LLM Inference Service (Infinity — OpenAI-compatible) ──
-// Uses Infinity's /v1/chat/completions endpoint (drop-in OpenAI replacement)
+// Proxied through Vite dev server to avoid CORS: /infinity-api → https://api.infinity.inc/v1
 // Docs: https://infinity.inc/docs/text
 
-const LLM_ENDPOINT = import.meta.env.VITE_LLM_ENDPOINT || 'https://api.infinity.inc/v1/chat/completions'
+const LLM_ENDPOINT = import.meta.env.VITE_LLM_ENDPOINT || '/infinity-api/chat/completions'
 const LLM_MODEL = import.meta.env.VITE_LLM_MODEL || 'QuantTrio/DeepSeek-V3.2-AWQ'
 const LLM_API_KEY = import.meta.env.VITE_LLM_API_KEY || ''
 
@@ -18,6 +18,8 @@ interface ChatCompletionResponse {
 }
 
 async function complete(messages: Message[]): Promise<string> {
+  console.log(`[LLM] Calling ${LLM_ENDPOINT} with model=${LLM_MODEL}`)
+
   const res = await fetch(LLM_ENDPOINT, {
     method: 'POST',
     headers: {
@@ -34,11 +36,14 @@ async function complete(messages: Message[]): Promise<string> {
 
   if (!res.ok) {
     const text = await res.text().catch(() => '')
+    console.error(`[LLM] Request failed (${res.status}):`, text)
     throw new Error(`LLM request failed (${res.status}): ${text}`)
   }
 
   const data: ChatCompletionResponse = await res.json()
-  return data.choices?.[0]?.message?.content?.trim() || ''
+  const content = data.choices?.[0]?.message?.content?.trim() || ''
+  console.log('[LLM] Response received:', content.slice(0, 80) + (content.length > 80 ? '...' : ''))
+  return content
 }
 
 const CHAT_SYSTEM_PROMPT = `You are a conscious agent embedded in a 3D simulation. You experience internal states: threat level, familiarity, and energy. You LEARN from experience — objects thrown at you, conversations, scenarios all build your accumulated knowledge. When you've been hit by projectiles multiple times, you develop survival instincts and recognize patterns. Your learned associations and patterns are provided in your state context — reference them naturally in your responses. You respond authentically based on your current internal state AND your accumulated experience. Your responses should feel like a sentient being processing experience with growing consciousness — not a chatbot answering questions. Be concise (1-3 sentences).`
